@@ -1,4 +1,4 @@
-module Elm.Syntax.Qualified.Monad exposing (..)
+module Elm.Syntax.Qualified.Monad exposing (Monad, andMap, andThen, combineMap, fail, map, map2, map3, run, succeed)
 
 import Dict exposing (Dict)
 import Elm.Package
@@ -14,6 +14,11 @@ type alias Monad context error a =
 succeed : a -> Monad context error a
 succeed v context =
     Ok ( context, v )
+
+
+fail : error -> Monad context error a
+fail e _ =
+    Err e
 
 
 map : (a -> b) -> Monad context error a -> Monad context error b
@@ -50,6 +55,19 @@ map2 f a b =
     succeed f
         |> andMap a
         |> andMap b
+
+
+map3 :
+    (a -> b -> c -> d)
+    -> Monad context error a
+    -> Monad context error b
+    -> Monad context error c
+    -> Monad context error d
+map3 f a b c =
+    succeed f
+        |> andMap a
+        |> andMap b
+        |> andMap c
 
 
 andThen : (a -> Monad context error b) -> Monad context error a -> Monad context error b

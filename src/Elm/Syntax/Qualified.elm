@@ -1,6 +1,7 @@
 module Elm.Syntax.Qualified exposing
     ( File, ModuleType(..), EffectModuleData, Import, Declaration(..), Expression(..)
     , fromUnqualified, QualifyError(..), Context, initContext, addModule
+    , toModuleInterface
     )
 
 {-|
@@ -29,8 +30,8 @@ import Elm.Syntax.Qualified.Monad as Monad
 import Elm.Syntax.Qualified.PackageDict as PackageDict exposing (PackageDict)
 import Elm.Syntax.Range exposing (Range)
 import Elm.Syntax.Signature as Signature
-import Elm.Syntax.Type as Type exposing (Type, ValueConstructor)
-import Elm.Syntax.TypeAlias as TypeAlias exposing (TypeAlias)
+import Elm.Syntax.Type as Type
+import Elm.Syntax.TypeAlias as TypeAlias
 import Elm.Syntax.TypeAnnotation as TypeAnnotation
 import Result.Extra
 import Set
@@ -96,6 +97,17 @@ type alias Function =
 -}
 type alias Signature =
     { name : Node String
+    , typeAnnotation : Node TypeAnnotation
+    }
+
+
+{-| Type alias that defines the syntax for a type alias.
+A bit meta, but you get the idea. All information that you can define in a type alias is embedded.
+-}
+type alias TypeAlias =
+    { documentation : Maybe (Node Documentation)
+    , name : Node String
+    , generics : List (Node String)
     , typeAnnotation : Node TypeAnnotation
     }
 
@@ -189,6 +201,14 @@ type alias Type =
     , name : Node String
     , generics : List (Node String)
     , constructors : List (Node ValueConstructor)
+    }
+
+
+{-| Syntax for a custom type value constructor.
+-}
+type alias ValueConstructor =
+    { name : Node String
+    , arguments : List (Node TypeAnnotation)
     }
 
 
@@ -396,14 +416,36 @@ qualifyDeclaration declaration =
         Declaration.AliasDeclaration _ ->
             Debug.todo "branch 'AliasDeclaration _' not implemented"
 
-        Declaration.CustomTypeDeclaration _ ->
-            Debug.todo "branch 'CustomTypeDeclaration _' not implemented"
+        Declaration.CustomTypeDeclaration tipe ->
+            Monad.map CustomTypeDeclaration (qualifyType tipe)
 
         Declaration.PortDeclaration _ ->
             Debug.todo "branch 'PortDeclaration _' not implemented"
 
         Declaration.Destructuring _ _ ->
             Debug.todo "branch 'Destructuring _ _' not implemented"
+
+
+qualifyType : Type.Type -> Monad Type
+qualifyType tipe =
+    Monad.map
+        (\constructors ->
+            { documentation = tipe.documentation
+            , name = tipe.name
+            , generics = tipe.generics
+            , constructors = constructors
+            }
+        )
+        (Monad.combineMap (qualifyNode qualifyConstructor) tipe.constructors)
+
+
+qualifyConstructor : Type.ValueConstructor -> Monad ValueConstructor
+qualifyConstructor constructor =
+    Monad.map
+        (\arguments ->
+            { name = constructor.name, arguments = arguments }
+        )
+        (Monad.combineMap qualifyTypeAnnotation constructor.arguments)
 
 
 qualifyFunctionDeclaration : Expression.Function -> Monad Function
@@ -433,7 +475,7 @@ qualifySignature signature =
             , typeAnnotation = typeAnnotation
             }
         )
-        (qualifyNode qualifyTypeAnnotation signature.typeAnnotation)
+        (qualifyTypeAnnotation signature.typeAnnotation)
 
 
 qualifyNode : (a -> Monad b) -> Node a -> Monad (Node b)
@@ -456,22 +498,39 @@ qualifyNode_ f (Node range v) context =
             Err (Node range e)
 
 
-qualifyTypeAnnotation : TypeAnnotation.TypeAnnotation -> Monad TypeAnnotation
-qualifyTypeAnnotation typeAnnotation =
+qualifyTypeAnnotation : Node TypeAnnotation.TypeAnnotation -> Monad (Node TypeAnnotation)
+qualifyTypeAnnotation (Node range typeAnnotation) =
     case typeAnnotation of
         TypeAnnotation.Unit ->
-            Monad.succeed UnitType
+            Monad.succeed (Node range UnitType)
 
-        TypeAnnotation.GenericType _ ->
-            Debug.todo "qualifyTypeAnnotation: branch 'GenericType _' not implemented"
+        TypeAnnotation.GenericType v ->
+            Monad.succeed (Node range (GenericType v))
 
         TypeAnnotation.Typed fullTypeName params ->
-            Monad.map2 NamedType
+            Monad.map2 (\lc rc -> Node range (NamedType lc rc))
                 (qualifyNode_ qualifyName fullTypeName)
-                (Monad.combineMap (qualifyNode qualifyTypeAnnotation) params)
+                (Monad.combineMap qualifyTypeAnnotation params)
+
+        TypeAnnotation.Tupled [ l, r ] ->
+            Monad.map2
+                (\ql qr ->
+                    Node range (TupleType ql qr)
+                )
+                (qualifyTypeAnnotation l)
+                (qualifyTypeAnnotation r)
+
+        TypeAnnotation.Tupled [ l, m, r ] ->
+            Monad.map3
+                (\ql qm qr ->
+                    Node range (TripleType ql qm qr)
+                )
+                (qualifyTypeAnnotation l)
+                (qualifyTypeAnnotation m)
+                (qualifyTypeAnnotation r)
 
         TypeAnnotation.Tupled _ ->
-            Debug.todo "qualifyTypeAnnotation: branch 'Tupled _' not implemented"
+            Monad.fail (Node range InvalidSyntax)
 
         TypeAnnotation.Record _ ->
             Debug.todo "qualifyTypeAnnotation: branch 'Record _' not implemented"
@@ -759,3 +818,9 @@ insertResolvesTo key packageName value dict =
                     Just (ResolvesToPackage packageName value)
         )
         dict
+
+
+{-| -}
+toModuleInterface : File -> ModuleInterface
+toModuleInterface file =
+    Debug.todo "toModuleInterface"
