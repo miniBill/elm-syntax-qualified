@@ -1,7 +1,7 @@
 module Elm.Syntax.Qualified exposing
     ( File, ModuleType(..), EffectModuleData, Import, Declaration(..), Expression(..)
     , fromUnqualified, QualifyError(..), Context, initContext, addModule
-    , toModuleInterface
+    , ModuleInterface, PackageInterface, toModuleInterface
     )
 
 {-|
@@ -33,8 +33,9 @@ import Elm.Syntax.Signature as Signature
 import Elm.Syntax.Type as Type
 import Elm.Syntax.TypeAlias as TypeAlias
 import Elm.Syntax.TypeAnnotation as TypeAnnotation
+import Maybe.Extra
 import Result.Extra
-import Set
+import Set exposing (Set)
 
 
 {-| Type annotation for a file
@@ -956,11 +957,8 @@ type alias PackageInterface =
 {-| Values and types exposed by a module.
 -}
 type alias ModuleInterface =
-    { exposingList : Exposing
-    , types : Dict String Type
-    , values : Dict String Function
-    , aliases : Dict String TypeAlias
-    , ports : Dict String Signature
+    { types : Set String
+    , values : Set String
     }
 
 
@@ -987,6 +985,11 @@ addModule packageName moduleName moduleInterface (Context context) =
         }
 
 
+addPackage : Elm.Package.Name -> PackageInterface -> Context -> Context
+addPackage packageName modules context =
+    Dict.foldl (addModule packageName) context modules
+
+
 insertResolvesTo :
     comparable
     -> Elm.Package.Name
@@ -1006,7 +1009,139 @@ insertResolvesTo key packageName value dict =
         dict
 
 
+type Exposed
+    = NotExposed
+    | ExposedOpaque
+    | ExposedWithVariants
+
+
 {-| -}
 toModuleInterface : File -> ModuleInterface
 toModuleInterface file =
-    Debug.todo "toModuleInterface"
+    let
+        exposed : Maybe { exposedTypes : Dict String Bool, exposedValues : Set String }
+        exposed =
+            case file.exposingList of
+                Node _ (Exposing.All _) ->
+                    Nothing
+
+                Node _ (Exposing.Explicit list) ->
+                    List.foldl
+                        (\(Node _ e) a ->
+                            case e of
+                                Exposing.TypeExpose { name, open } ->
+                                    { a
+                                        | exposedTypes =
+                                            Dict.insert name (Maybe.Extra.isJust open) a.exposedTypes
+                                    }
+
+                                Exposing.InfixExpose _ ->
+                                    a
+
+                                Exposing.FunctionExpose f ->
+                                    { a
+                                        | exposedValues = Set.insert f a.exposedValues
+                                    }
+
+                                Exposing.TypeOrAliasExpose name ->
+                                    { a
+                                        | exposedTypes =
+                                            Dict.insert name False a.exposedTypes
+                                    }
+                        )
+                        { exposedTypes = Dict.empty
+                        , exposedValues = Set.empty
+                        }
+                        list
+                        |> Just
+    in
+    List.foldl
+        (\(Node _ decl) acc ->
+            let
+                exposeType :
+                    Node String
+                    -> ModuleInterface
+                    -> ModuleInterface
+                exposeType (Node _ name) a =
+                    { a | types = Set.insert name a.types }
+
+                exposeValue :
+                    Node String
+                    -> ModuleInterface
+                    -> ModuleInterface
+                exposeValue (Node _ name) a =
+                    { a | values = Set.insert name a.values }
+
+                exposeVariants :
+                    List (Node ValueConstructor)
+                    -> ModuleInterface
+                    -> ModuleInterface
+                exposeVariants constructors a =
+                    { a
+                        | values =
+                            List.foldl
+                                (\(Node _ e) -> Set.insert (Node.value e.name))
+                                a.values
+                                constructors
+                    }
+            in
+            case decl of
+                InfixDeclaration _ ->
+                    acc
+
+                CustomTypeDeclaration { name, constructors } ->
+                    case exposed of
+                        Nothing ->
+                            acc
+                                |> exposeType name
+                                |> exposeVariants constructors
+
+                        Just { exposedTypes } ->
+                            case Dict.get (Node.value name) exposedTypes of
+                                Nothing ->
+                                    acc
+
+                                Just False ->
+                                    acc |> exposeType name
+
+                                Just True ->
+                                    acc
+                                        |> exposeType name
+                                        |> exposeVariants constructors
+
+                FunctionDeclaration { declaration } ->
+                    let
+                        name : Node String
+                        name =
+                            (Node.value declaration).name
+                    in
+                    case exposed of
+                        Nothing ->
+                            acc |> exposeValue name
+
+                        Just { exposedValues } ->
+                            if Set.member (Node.value name) exposedValues then
+                                acc |> exposeValue name
+
+                            else
+                                acc
+
+                AliasDeclaration _ ->
+                    Debug.todo "branch 'AliasDeclaration _' not implemented"
+
+                PortDeclaration { name } ->
+                    case exposed of
+                        Nothing ->
+                            acc |> exposeValue name
+
+                        Just { exposedValues } ->
+                            if Set.member (Node.value name) exposedValues then
+                                acc |> exposeValue name
+
+                            else
+                                acc
+        )
+        { types = Set.empty
+        , values = Set.empty
+        }
+        file.declarations

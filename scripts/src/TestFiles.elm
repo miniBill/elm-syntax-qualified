@@ -10,7 +10,7 @@ import Cli.Option
 import Cli.OptionsParser exposing (OptionsParser)
 import Cli.OptionsParser.BuilderState
 import Cli.Program
-import Dict
+import Dict exposing (Dict)
 import Elm.Package
 import Elm.Parser
 import Elm.Project
@@ -110,19 +110,29 @@ checkApplication elmJsonPath application =
                 , elmJson = Elm.Project.Application application
                 }
             )
+        |> BackendTask.map (\_ -> ())
 
 
-checkModules : Elm.Package.Name -> Qualified.Context -> List String -> BackendTask FatalError ()
+checkModules : Elm.Package.Name -> Qualified.Context -> List String -> BackendTask FatalError Qualified.PackageInterface
 checkModules packageName =
     let
-        go addedAny delayed context queue =
+        -- TODO: this is currently O(n l) where n is the number of modules and l is the maximum
+        -- import depth. In practice l is `log n` but in theory it could be O(n)
+        go :
+            Bool
+            -> List String
+            -> Qualified.PackageInterface
+            -> Qualified.Context
+            -> List String
+            -> BackendTask FatalError Qualified.PackageInterface
+        go addedAny delayed moduleDict context queue =
             case queue of
                 [] ->
                     if List.isEmpty delayed then
-                        BackendTask.succeed ()
+                        BackendTask.succeed moduleDict
 
                     else if addedAny then
-                        go False [] context delayed
+                        go False [] moduleDict context delayed
 
                     else
                         BackendTask.fail (FatalError.fromString ("Circular import? Delayed " ++ String.join ", " delayed))
@@ -140,21 +150,24 @@ checkModules packageName =
                             let
                                 newContext : Qualified.Context
                                 newContext =
-                                    let
-                                        _ =
-                                            Debug.todo
+                                    Qualified.addModule packageName moduleName moduleInterface context
 
-                                        -- Qualified.addModule
-                                        --     packageName
-                                        --     (Node.value qualified.moduleName)
-                                        --     (Qualified.toModuleInterface qualified)
-                                    in
-                                    context
+                                moduleInterface : Qualified.ModuleInterface
+                                moduleInterface =
+                                    Qualified.toModuleInterface qualified
+
+                                moduleName : ModuleName
+                                moduleName =
+                                    Node.value qualified.moduleName
+
+                                newModuleDict : Dict ModuleName Qualified.ModuleInterface
+                                newModuleDict =
+                                    Dict.insert moduleName moduleInterface moduleDict
                             in
-                            go True delayed newContext tail
+                            go True delayed newModuleDict newContext tail
 
                         Err ( _, Qualified.ModuleNotFound _ ) ->
-                            go addedAny (head :: delayed) context tail
+                            go addedAny (head :: delayed) moduleDict context tail
 
                         Err ( _, Qualified.ModuleNameIsAmbiguous _ ) ->
                             Debug.todo "branch 'Err (Node _ (ModuleNameIsAmbiguous _))' not implemented"
@@ -162,7 +175,7 @@ checkModules packageName =
                         Err ( _, Qualified.InvalidSyntax ) ->
                             Debug.todo "branch 'Err (Node _ InvalidSyntax)' not implemented"
     in
-    go False []
+    go False [] Dict.empty
 
 
 parseErrorToFatalError : String -> List Parser.DeadEnd -> FatalError
