@@ -1137,8 +1137,39 @@ unqualifiedToModuleInterface file =
                             else
                                 acc
 
-                Declaration.AliasDeclaration _ ->
-                    Debug.todo "branch 'AliasDeclaration _' not implemented"
+                Declaration.AliasDeclaration { name, typeAnnotation } ->
+                    case typeAnnotation of
+                        Node _ (TypeAnnotation.Record _) ->
+                            case exposed of
+                                Nothing ->
+                                    acc
+                                        |> exposeType name
+                                        |> exposeValue name
+
+                                Just { exposedTypes } ->
+                                    case Dict.get (Node.value name) exposedTypes of
+                                        Nothing ->
+                                            acc
+
+                                        Just _ ->
+                                            acc
+                                                |> exposeType name
+                                                |> exposeValue name
+
+                        _ ->
+                            case exposed of
+                                Nothing ->
+                                    acc
+                                        |> exposeType name
+
+                                Just { exposedTypes } ->
+                                    case Dict.get (Node.value name) exposedTypes of
+                                        Nothing ->
+                                            acc
+
+                                        Just _ ->
+                                            acc
+                                                |> exposeType name
 
                 Declaration.PortDeclaration { name } ->
                     case exposed of

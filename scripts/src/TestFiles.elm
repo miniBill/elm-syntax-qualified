@@ -150,15 +150,20 @@ addDirectDependency ( packageName, packageVersion ) context =
             BackendTask.fail (FatalError.fromString "Cannot depend on an application")
 
         Elm.Project.Package package ->
-            case package.exposed of
-                Elm.Project.ExposedList modules ->
-                    List.foldl
-                        (\e a -> a |> BackendTask.andThen (addDependencyModule packageName path e))
-                        (BackendTask.succeed context)
-                        modules
+            let
+                exposed : List Elm.Module.Name
+                exposed =
+                    case package.exposed of
+                        Elm.Project.ExposedList modules ->
+                            modules
 
-                Elm.Project.ExposedDict _ ->
-                    Debug.todo "branch 'ExposedDict _' not implemented"
+                        Elm.Project.ExposedDict list ->
+                            List.concatMap Tuple.second list
+            in
+            List.foldl
+                (\e a -> a |> BackendTask.andThen (addDependencyModule packageName path e))
+                (BackendTask.succeed context)
+                exposed
 
 
 addDependencyModule :
