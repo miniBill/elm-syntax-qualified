@@ -1,14 +1,18 @@
 module TestExample exposing (..)
 
+import Dict
 import Elm.Package as Package
 import Elm.Parser
 import Elm.Project as Project exposing (Project)
+import Elm.Syntax.Exposing
 import Elm.Syntax.File
 import Elm.Syntax.Qualified
 import Elm.Syntax.Qualified.PackageDict as PackageDict
 import Elm.Syntax.Qualified.Utils as Utils
+import Elm.Syntax.Range as Range
 import Expect
 import Json.Decode
+import Json.Encode
 import Test exposing (Test, test)
 
 
@@ -31,12 +35,40 @@ suite =
 
                 ( Ok parsedElmJson, Ok parsedFile ) ->
                     parsedFile
-                        |> Elm.Syntax.Qualified.fromUnqualified
-                            { packageName = Utils.authorProject
-                            , dependencies = PackageDict.empty
-                            , elmJson = parsedElmJson
-                            }
+                        |> Elm.Syntax.Qualified.fromUnqualified (context parsedElmJson)
                         |> Expect.ok
+
+
+context : Project -> Elm.Syntax.Qualified.Context
+context parsedElmJson =
+    Elm.Syntax.Qualified.initContext
+        { packageName = Utils.authorProject
+        , elmJson = parsedElmJson
+        }
+        |> Elm.Syntax.Qualified.addModule
+            (unsafePackageName "elm-explorations/test")
+            [ "Test" ]
+            { aliases = Dict.empty
+            , exposingList = Elm.Syntax.Exposing.All Range.emptyRange
+            , types = Dict.empty
+            , values = Dict.empty
+            , ports = Dict.empty
+            }
+
+
+unsafePackageName : String -> Package.Name
+unsafePackageName input =
+    case Package.fromString input of
+        Just name ->
+            name
+
+        Nothing ->
+            Debug.todo ("unsafePackageName " ++ escape input)
+
+
+escape : String -> String
+escape input =
+    Json.Encode.encode 0 (Json.Encode.string input)
 
 
 file : String

@@ -1,4 +1,15 @@
-module Elm.Syntax.Qualified exposing (Declaration(..), EffectModuleData, Expression(..), File, ModuleType(..), PackageInterface, QualifyError(..), fromUnqualified)
+module Elm.Syntax.Qualified exposing
+    ( File, ModuleType(..), EffectModuleData, Import, Declaration(..), Expression(..)
+    , fromUnqualified, QualifyError(..), Context, initContext, addModule
+    )
+
+{-|
+
+@docs File, ModuleType, EffectModuleData, Import, Declaration, Expression
+
+@docs fromUnqualified, QualifyError, Context, initContext, addModule
+
+-}
 
 import Dict exposing (Dict)
 import Elm.Package
@@ -6,19 +17,22 @@ import Elm.Project
 import Elm.Syntax.Declaration as Declaration
 import Elm.Syntax.Documentation exposing (Documentation)
 import Elm.Syntax.Exposing as Exposing exposing (Exposing)
-import Elm.Syntax.Expression as Expression exposing (Expression, Function)
+import Elm.Syntax.Expression as Expression
 import Elm.Syntax.File
 import Elm.Syntax.Import as Import
 import Elm.Syntax.Infix as Infix exposing (Infix)
 import Elm.Syntax.Module
 import Elm.Syntax.ModuleName exposing (ModuleName)
 import Elm.Syntax.Node as Node exposing (Node(..))
-import Elm.Syntax.Pattern as Pattern exposing (Pattern)
-import Elm.Syntax.Qualified.PackageDict exposing (PackageDict)
+import Elm.Syntax.Pattern as Pattern
+import Elm.Syntax.Qualified.Monad as Monad
+import Elm.Syntax.Qualified.PackageDict as PackageDict exposing (PackageDict)
 import Elm.Syntax.Range exposing (Range)
-import Elm.Syntax.Signature as Signature exposing (Signature)
+import Elm.Syntax.Signature as Signature
 import Elm.Syntax.Type as Type exposing (Type, ValueConstructor)
 import Elm.Syntax.TypeAlias as TypeAlias exposing (TypeAlias)
+import Elm.Syntax.TypeAnnotation as TypeAnnotation
+import Result.Extra
 
 
 {-| Type annotation for a file
@@ -68,6 +82,104 @@ type Declaration
     | InfixDeclaration Infix
 
 
+{-| Type alias for a full function
+-}
+type alias Function =
+    { documentation : Maybe (Node Documentation)
+    , signature : Maybe (Node Signature)
+    , declaration : Node FunctionImplementation
+    }
+
+
+{-| Type alias representing a signature in Elm.
+-}
+type alias Signature =
+    { name : Node String
+    , typeAnnotation : Node TypeAnnotation
+    }
+
+
+{-| Custom type for different type annotations. For example:
+
+  - `GenericType`: `a`
+  - `NamedType`: `Maybe (Int -> String)`
+  - `UnitType`: `()`
+  - `TupleType`: `(a, b)`
+  - `TripleType`: `(a, b, c)`
+  - `RecordType`: `{ name : String}`
+  - `GenericRecordType`: `{ a | name : String}`
+  - `FunctionType`: `Int -> String`
+
+-}
+type TypeAnnotation
+    = GenericType String
+    | NamedType (Node ( Elm.Package.Name, ModuleName, String )) (List (Node TypeAnnotation))
+    | UnitType
+    | TupleType (Node TypeAnnotation) (Node TypeAnnotation)
+    | TripleType (Node TypeAnnotation) (Node TypeAnnotation) (Node TypeAnnotation)
+    | RecordType RecordDefinition
+    | GenericRecordType (Node String) (Node RecordDefinition)
+    | FunctionType (Node TypeAnnotation) (Node TypeAnnotation)
+
+
+{-| A list of fields in-order of a record type annotation.
+-}
+type alias RecordDefinition =
+    List (Node RecordField)
+
+
+{-| Single field of a record. A name and its type.
+-}
+type alias RecordField =
+    ( Node String, Node TypeAnnotation )
+
+
+{-| Type alias for a function's implementation
+-}
+type alias FunctionImplementation =
+    { name : Node String
+    , arguments : List (Node Pattern)
+    , expression : Node Expression
+    }
+
+
+{-| Custom type for all patterns such as:
+
+  - `AllPattern`: `_`
+  - `UnitPattern`: `()`
+  - `CharPattern`: `'c'`
+  - `StringPattern`: `"hello"`
+  - `IntPattern`: `42`
+  - `HexPattern`: `0x11`
+  - `FloatPattern`: `42.0`
+  - `TuplePattern`: `(a, b)`
+  - `RecordPattern`: `{name, age}`
+  - `UnConsPattern`: `x :: xs`
+  - `ListPattern`: `[ x, y ]`
+  - `VarPattern`: `x`
+  - `NamedPattern`: `Just _`
+  - `AsPattern`: `_ as x`
+  - `ParenthesizedPattern`: `( _ )`
+
+-}
+type Pattern
+    = AllPattern
+    | UnitPattern
+    | CharPattern Char
+    | StringPattern String
+    | IntPattern Int
+    | HexPattern Int
+    | FloatPattern Float
+    | TuplePattern (List (Node Pattern))
+    | RecordPattern (List (Node String))
+    | UnConsPattern (Node Pattern) (Node Pattern)
+    | ListPattern (List (Node Pattern))
+    | VarPattern String
+    | NamedPattern Elm.Package.Name ModuleName String (List (Node Pattern))
+    | AsPattern (Node Pattern) (Node String)
+    | ParenthesizedPattern (Node Pattern)
+
+
 {-| Type alias that defines the syntax for a custom type.
 All information that you can define in a type alias is embedded.
 -}
@@ -81,27 +193,28 @@ type alias Type =
 
 {-| Custom type for all expressions such as:
 
-  - `Unit`: `()`
-  - `Application`: `add a b`
-  - `OperatorApplication`: `a + b`
-  - `FunctionOrValue`: `add` or `True`
-  - `IfBlock`: `if a then b else c`
-  - `PrefixOperator`: `(+)`
-  - `Integer`: `42`
-  - `Hex`: `0x1F`
-  - `Floatable`: `42.0`
-  - `Negation`: `-a`
-  - `Literal`: `"text"`
-  - `CharLiteral`: `'a'`
-  - `TupledExpression`: `(a, b)` or `(a, b, c)`
+  - `UnitExpression`: `()`
+  - `ApplicationExpression`: `add a b`
+  - `OperatorApplicationExpression`: `a + b`
+  - `FunctionOrValueExpression`: `add` or `True`
+  - `IfBlockExpression`: `if a then b else c`
+  - `PrefixOperatorExpression`: `(+)`
+  - `IntegerExpression`: `42`
+  - `HexExpression`: `0x1F`
+  - `FloatExpression`: `42.0`
+  - `NegationExpression`: `-a`
+  - `StringExpression`: `"text"`
+  - `CharExpression`: `'a'`
+  - `TupleExpression`: `(a, b)`
+  - `TripleExpression`: `(a, b, c)`
   - `ParenthesizedExpression`: `(a)`
   - `LetExpression`: `let a = 4 in a`
   - `CaseExpression`: `case a of` followed by pattern matches
   - `LambdaExpression`: `(\a -> a)`
-  - `RecordExpr`: `{ name = "text" }`
-  - `ListExpr`: `[ x, y ]`
-  - `RecordAccess`: `a.name`
-  - `RecordAccessFunction`: `.name`
+  - `RecordExpression`: `{ name = "text" }`
+  - `ListExpression`: `[ x, y ]`
+  - `RecordAccessExpression`: `a.name`
+  - `RecordAccessFunctionExpression`: `.name`
   - `RecordUpdateExpression`: `{ a | name = "text" }`
   - `GLSLExpression`: `[glsl| ... |]`
 
@@ -110,7 +223,7 @@ type Expression
     = UnitExpression
     | ApplicationExpression (List (Node Expression))
     | OperatorApplicationExpression String (Node Expression) (Node Expression)
-    | FunctionOrValueExpression Elm.Package.Name ModuleName String
+    | FunctionOrValueExpression (Maybe ( Elm.Package.Name, ModuleName )) String
     | IfBlockExpression (Node Expression) (Node Expression) (Node Expression)
     | PrefixOperatorExpression String
     | IntegerExpression Int
@@ -176,25 +289,35 @@ type alias ExposedType =
     }
 
 
+{-| Parsing context.
+-}
 type Context
     = Context
         { packageName : Elm.Package.Name
         , dependencies : PackageDict PackageInterface
-        , elmJson : Elm.Project.Project
-        , modules : Dict ModuleName ResolvesTo
+        , availableModules : Dict ModuleName (ResolvesTo ModuleInterface)
+        , visibleModules : Dict ModuleName (ResolvesTo ())
+        , visibleTypes : Dict String (ResolvesTo ())
+        , visibleValues : Dict String (ResolvesTo ())
         }
 
 
-type ResolvesTo
-    = ResolvesToPackage Elm.Package.Name
+type ResolvesTo a
+    = ResolvesToPackage Elm.Package.Name a
     | IsAmbiguous
 
 
+type alias Monad a =
+    Monad.Monad Context QualifyError a
+
+
+{-| Try building a fully-qualified `File` from an elm-syntax `File`.
+-}
 fromUnqualified :
     Context
     -> Elm.Syntax.File.File
     -> Result QualifyError File
-fromUnqualified input file =
+fromUnqualified initialContext file =
     let
         ( moduleName, exposingList, moduleType ) =
             case file.moduleDefinition of
@@ -216,49 +339,183 @@ fromUnqualified input file =
                     , Node range (EffectModule { command = effectModule.command, subscription = effectModule.subscription })
                     )
 
-        imports : List (Node Import)
-        imports =
-            List.map (qualifyImport input) file.imports
-
-        r : File
-        r =
-            { moduleName = moduleName
-            , exposingList = exposingList
-            , moduleType = moduleType
-            , imports = imports
-            , declarations = List.map (qualifyDeclaration input imports) file.declarations
-            , comments = file.comments
-            }
+        importsResult : Monad (List (Node Import))
+        importsResult =
+            file.imports
+                |> Monad.combineMap (qualifyNode qualifyImport)
     in
-    Ok r
+    importsResult
+        |> Monad.andThen
+            (\imports ->
+                file.declarations
+                    |> Monad.combineMap
+                        (qualifyNode qualifyDeclaration)
+                    |> Monad.map
+                        (\declarations ->
+                            { moduleName = moduleName
+                            , exposingList = exposingList
+                            , moduleType = moduleType
+                            , imports = imports
+                            , declarations = declarations
+                            , comments = file.comments
+                            }
+                        )
+            )
+        |> (\f -> f initialContext)
+        |> Result.map Tuple.second
 
 
-qualifyDeclaration :
-    { packageName : Elm.Package.Name, dependencies : PackageDict PackageInterface, elmJson : Elm.Project.Project }
-    -> List (Node Import)
-    -> Node Declaration.Declaration
-    -> Node Declaration
-qualifyDeclaration arg1 arg2 arg3 =
-    Debug.todo "TODO"
+qualifyDeclaration : Declaration.Declaration -> Monad Declaration
+qualifyDeclaration declaration =
+    case declaration of
+        Declaration.InfixDeclaration i ->
+            Monad.succeed (InfixDeclaration i)
+
+        Declaration.FunctionDeclaration f ->
+            Monad.map FunctionDeclaration (qualifyFunctionDeclaration f)
+
+        Declaration.AliasDeclaration _ ->
+            Debug.todo "branch 'AliasDeclaration _' not implemented"
+
+        Declaration.CustomTypeDeclaration _ ->
+            Debug.todo "branch 'CustomTypeDeclaration _' not implemented"
+
+        Declaration.PortDeclaration _ ->
+            Debug.todo "branch 'PortDeclaration _' not implemented"
+
+        Declaration.Destructuring _ _ ->
+            Debug.todo "branch 'Destructuring _ _' not implemented"
 
 
-qualifyImport :
-    { packageName : Elm.Package.Name, dependencies : PackageDict PackageInterface, elmJson : Elm.Project.Project }
-    -> Node Import.Import
-    -> Node Import
-qualifyImport input import_ =
-    { moduleName = import_.moduleName
-    }
+qualifyFunctionDeclaration : Expression.Function -> Monad Function
+qualifyFunctionDeclaration f =
+    Monad.map2
+        (\signature declaration ->
+            { documentation = f.documentation
+            , signature = signature
+            , declaration = declaration
+            }
+        )
+        (case f.signature of
+            Nothing ->
+                Monad.succeed Nothing
+
+            Just signature ->
+                Monad.map Just (qualifyNode qualifySignature signature)
+        )
+        (qualifyNode qualifyFunctionImplementation f.declaration)
 
 
+qualifySignature : Signature.Signature -> Monad Signature
+qualifySignature signature =
+    Monad.map
+        (\typeAnnotation ->
+            { name = signature.name
+            , typeAnnotation = typeAnnotation
+            }
+        )
+        (qualifyNode qualifyTypeAnnotation signature.typeAnnotation)
+
+
+qualifyNode : (a -> Monad b) -> Node a -> Monad (Node b)
+qualifyNode f (Node range v) =
+    Monad.map (Node range) (f v)
+
+
+qualifyTypeAnnotation : TypeAnnotation.TypeAnnotation -> Monad TypeAnnotation
+qualifyTypeAnnotation typeAnnotation =
+    case typeAnnotation of
+        TypeAnnotation.Unit ->
+            Monad.succeed UnitType
+
+        TypeAnnotation.GenericType _ ->
+            Debug.todo "qualifyTypeAnnotation: branch 'GenericType _' not implemented"
+
+        TypeAnnotation.Typed fullTypeName params ->
+            Monad.map2 NamedType
+                (qualifyNode qualifyTypeName fullTypeName)
+                (Monad.combineMap (qualifyNode qualifyTypeAnnotation) params)
+
+        TypeAnnotation.Tupled _ ->
+            Debug.todo "qualifyTypeAnnotation: branch 'Tupled _' not implemented"
+
+        TypeAnnotation.Record _ ->
+            Debug.todo "qualifyTypeAnnotation: branch 'Record _' not implemented"
+
+        TypeAnnotation.GenericRecord _ _ ->
+            Debug.todo "qualifyTypeAnnotation: branch 'GenericRecord _ _' not implemented"
+
+        TypeAnnotation.FunctionTypeAnnotation _ _ ->
+            Debug.todo "qualifyTypeAnnotation: branch 'FunctionTypeAnnotation _ _' not implemented"
+
+
+qualifyTypeName : ( ModuleName, String ) -> Monad ( Elm.Package.Name, ModuleName, String )
+qualifyTypeName ( moduleName, typeName ) =
+    Debug.todo "qualifyTypeName"
+
+
+qualifyFunctionImplementation : Expression.FunctionImplementation -> Monad FunctionImplementation
+qualifyFunctionImplementation arg1 =
+    Debug.todo "qualifyFunctionImplementation"
+
+
+qualifyImport : Import.Import -> Monad Import
+qualifyImport import_ (Context context) =
+    let
+        imported : ModuleName
+        imported =
+            Node.value import_.moduleName
+    in
+    case Dict.get imported context.availableModules of
+        Just (ResolvesToPackage packageName moduleInterface) ->
+            let
+                newContext : Context
+                newContext =
+                    Context
+                        { context
+                            | visibleModules =
+                                insertResolvesTo
+                                    (import_.moduleAlias
+                                        |> Maybe.withDefault import_.moduleName
+                                        |> Node.value
+                                    )
+                                    packageName
+                                    ()
+                                    context.visibleModules
+                        }
+
+                qualifiedImport : Import
+                qualifiedImport =
+                    { packageName = packageName
+                    , moduleName = import_.moduleName
+                    , moduleAlias = import_.moduleAlias
+                    , exposingList = import_.exposingList
+                    }
+            in
+            Ok ( newContext, qualifiedImport )
+
+        Just IsAmbiguous ->
+            Err (ModuleNameIsAmbiguous imported)
+
+        Nothing ->
+            Err (ModuleNotFound imported)
+
+
+{-| -}
 type QualifyError
     = MissingDependency Elm.Package.Name
+    | ModuleNotFound ModuleName
+    | ModuleNameIsAmbiguous ModuleName
 
 
+{-| A dictionary of all values and types a package exposes.
+-}
 type alias PackageInterface =
     Dict ModuleName ModuleInterface
 
 
+{-| Values and types exposed by a module.
+-}
 type alias ModuleInterface =
     { exposingList : Exposing
     , types : Dict String Type
@@ -266,3 +523,45 @@ type alias ModuleInterface =
     , aliases : Dict String TypeAlias
     , ports : Dict String Signature
     }
+
+
+{-| Build a `Context`.
+-}
+initContext : { packageName : Elm.Package.Name, elmJson : Elm.Project.Project } -> Context
+initContext { packageName, elmJson } =
+    Context
+        { packageName = packageName
+        , dependencies = PackageDict.empty
+        , availableModules = Dict.empty
+        , visibleModules = Dict.empty
+        , visibleTypes = Dict.empty
+        , visibleValues = Dict.empty
+        }
+
+
+addModule : Elm.Package.Name -> ModuleName -> ModuleInterface -> Context -> Context
+addModule packageName moduleName moduleInterface (Context context) =
+    Context
+        { context
+            | availableModules =
+                insertResolvesTo moduleName packageName moduleInterface context.availableModules
+        }
+
+
+insertResolvesTo :
+    comparable
+    -> Elm.Package.Name
+    -> a
+    -> Dict comparable (ResolvesTo a)
+    -> Dict comparable (ResolvesTo a)
+insertResolvesTo key packageName value dict =
+    Dict.update key
+        (\existing ->
+            case existing of
+                Just _ ->
+                    Just IsAmbiguous
+
+                Nothing ->
+                    Just (ResolvesToPackage packageName value)
+        )
+        dict
