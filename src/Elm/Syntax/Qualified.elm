@@ -183,7 +183,8 @@ type Pattern
     | IntPattern Int
     | HexPattern Int
     | FloatPattern Float
-    | TuplePattern (List (Node Pattern))
+    | TuplePattern (Node Pattern) (Node Pattern)
+    | TriplePattern (Node Pattern) (Node Pattern) (Node Pattern)
     | RecordPattern (List (Node String))
     | UnConsPattern (Node Pattern) (Node Pattern)
     | ListPattern (List (Node Pattern))
@@ -370,12 +371,11 @@ fromUnqualified (Context initialContext) file =
         result : Result (Node QualifyError) ( ContextData ModuleName, File )
         result =
             file.imports
-                |> Monad.combineMap (qualifyNode_ qualifyImport)
+                |> Monad.combineMap qualifyImport
                 |> Monad.andThen
                     (\imports ->
                         file.declarations
-                            |> Monad.combineMap
-                                (qualifyNode qualifyDeclaration)
+                            |> Monad.combineMap qualifyDeclaration
                             |> Monad.map
                                 (\declarations ->
                                     { moduleName = moduleName
@@ -404,8 +404,18 @@ fromUnqualified (Context initialContext) file =
             Err ( range, e )
 
 
-qualifyDeclaration : Declaration.Declaration -> Monad Declaration
-qualifyDeclaration declaration =
+qualifyDeclaration : Node Declaration.Declaration -> Monad (Node Declaration)
+qualifyDeclaration v =
+    qualifyNode qualifyDeclaration_ v
+
+
+qualifyImport : Node Import.Import -> Monad (Node Import)
+qualifyImport v =
+    qualifyNode_ qualifyImport_ v
+
+
+qualifyDeclaration_ : Declaration.Declaration -> Monad Declaration
+qualifyDeclaration_ declaration =
     case declaration of
         Declaration.InfixDeclaration i ->
             Monad.succeed (InfixDeclaration i)
@@ -449,11 +459,16 @@ qualifyType tipe =
             , constructors = constructors
             }
         )
-        (Monad.combineMap (qualifyNode qualifyConstructor) tipe.constructors)
+        (Monad.combineMap qualifyConstructor tipe.constructors)
 
 
-qualifyConstructor : Type.ValueConstructor -> Monad ValueConstructor
-qualifyConstructor constructor =
+qualifyConstructor : Node Type.ValueConstructor -> Monad (Node ValueConstructor)
+qualifyConstructor v =
+    qualifyNode qualifyConstructor_ v
+
+
+qualifyConstructor_ : Type.ValueConstructor -> Monad ValueConstructor
+qualifyConstructor_ constructor =
     Monad.map
         (\arguments ->
             { name = constructor.name, arguments = arguments }
@@ -475,13 +490,18 @@ qualifyFunctionDeclaration f =
                 Monad.succeed Nothing
 
             Just signature ->
-                Monad.map Just (qualifyNode qualifySignature signature)
+                Monad.map Just (qualifySignature signature)
         )
         (qualifyNode qualifyFunctionImplementation f.declaration)
 
 
-qualifySignature : Signature.Signature -> Monad Signature
-qualifySignature signature =
+qualifySignature : Node Signature.Signature -> Monad (Node Signature)
+qualifySignature s =
+    qualifyNode qualifySignature_ s
+
+
+qualifySignature_ : Signature.Signature -> Monad Signature
+qualifySignature_ signature =
     Monad.map
         (\typeAnnotation ->
             { name = signature.name
@@ -522,7 +542,7 @@ qualifyTypeAnnotation (Node range typeAnnotation) =
 
         TypeAnnotation.Typed fullTypeName params ->
             Monad.map2 (\lc rc -> Node range (NamedType lc rc))
-                (qualifyNode_ qualifyName fullTypeName)
+                (qualifyName fullTypeName)
                 (Monad.combineMap qualifyTypeAnnotation params)
 
         TypeAnnotation.Tupled [ l, r ] ->
@@ -567,8 +587,13 @@ qualifyRecordFieldAnnotation ( name, annotation ) =
     Monad.map (Tuple.pair name) (qualifyTypeAnnotation annotation)
 
 
-qualifyName : ( ModuleName, String ) -> Monad_ ( Elm.Package.Name, ModuleName, String )
-qualifyName ( moduleName, name ) context =
+qualifyName : Node ( ModuleName, String ) -> Monad (Node ( Elm.Package.Name, ModuleName, String ))
+qualifyName name =
+    qualifyNode_ qualifyName_ name
+
+
+qualifyName_ : ( ModuleName, String ) -> Monad_ ( Elm.Package.Name, ModuleName, String )
+qualifyName_ ( moduleName, name ) context =
     if List.isEmpty moduleName then
         case Dict.get name context.visibleNames of
             Nothing ->
@@ -600,36 +625,49 @@ qualifyFunctionImplementation functionImplementation =
             , expression = expression
             }
         )
-        (Monad.combineMap (qualifyNode qualifyPattern) functionImplementation.arguments)
+        (Monad.combineMap qualifyPattern functionImplementation.arguments)
         (qualifyExpression functionImplementation.expression)
 
 
-qualifyPattern : Pattern.Pattern -> Monad Pattern
-qualifyPattern pattern =
+qualifyPattern : Node Pattern.Pattern -> Monad (Node Pattern)
+qualifyPattern (Node range pattern) =
     case pattern of
         Pattern.AllPattern ->
-            Monad.succeed AllPattern
+            Monad.succeed (Node range AllPattern)
 
         Pattern.UnitPattern ->
             Debug.todo "branch 'UnitPattern' not implemented"
 
         Pattern.CharPattern v ->
-            Monad.succeed (CharPattern v)
+            Monad.succeed (Node range (CharPattern v))
 
         Pattern.StringPattern v ->
-            Monad.succeed (StringPattern v)
+            Monad.succeed (Node range (StringPattern v))
 
         Pattern.IntPattern v ->
-            Monad.succeed (IntPattern v)
+            Monad.succeed (Node range (IntPattern v))
 
         Pattern.HexPattern v ->
-            Monad.succeed (HexPattern v)
+            Monad.succeed (Node range (HexPattern v))
 
         Pattern.FloatPattern v ->
-            Monad.succeed (FloatPattern v)
+            Monad.succeed (Node range (FloatPattern v))
+
+        Pattern.TuplePattern [ l, r ] ->
+            Monad.map2
+                (\ql qr -> Node range (TuplePattern ql qr))
+                (qualifyPattern l)
+                (qualifyPattern r)
+
+        Pattern.TuplePattern [ l, m, r ] ->
+            Monad.map3
+                (\ql qm qr -> Node range (TriplePattern ql qm qr))
+                (qualifyPattern l)
+                (qualifyPattern m)
+                (qualifyPattern r)
 
         Pattern.TuplePattern _ ->
-            Debug.todo "branch 'TuplePattern _' not implemented"
+            Monad.fail (Node range InvalidSyntax)
 
         Pattern.RecordPattern _ ->
             Debug.todo "branch 'RecordPattern _' not implemented"
@@ -641,16 +679,21 @@ qualifyPattern pattern =
             Debug.todo "branch 'ListPattern _' not implemented"
 
         Pattern.VarPattern v ->
-            Monad.succeed (VarPattern v)
+            Monad.succeed (Node range (VarPattern v))
 
-        Pattern.NamedPattern _ _ ->
-            Debug.todo "branch 'NamedPattern _ _' not implemented"
+        Pattern.NamedPattern qualified patterns ->
+            Monad.map2
+                (\(Node _ ( package, fullModuleName, typeName )) qp ->
+                    Node range (NamedPattern package fullModuleName typeName qp)
+                )
+                (qualifyName (Node range ( qualified.moduleName, qualified.name )))
+                (Monad.combineMap qualifyPattern patterns)
 
         Pattern.AsPattern _ _ ->
             Debug.todo "branch 'AsPattern _ _' not implemented"
 
         Pattern.ParenthesizedPattern p ->
-            Monad.map ParenthesizedPattern (qualifyNode qualifyPattern p)
+            Monad.map (\qp -> Node range (ParenthesizedPattern qp)) (qualifyPattern p)
 
 
 qualifyExpression : Node Expression.Expression -> Monad (Node Expression)
@@ -723,8 +766,10 @@ qualifyExpression (Node range expression) =
         Expression.TupledExpression _ ->
             Monad.fail (Node range InvalidSyntax)
 
-        Expression.ParenthesizedExpression _ ->
-            Debug.todo "qualifyExpression - branch 'ParenthesizedExpression _' not implemented"
+        Expression.ParenthesizedExpression p ->
+            Monad.map
+                (\qp -> Node range (ParenthesizedExpression qp))
+                (qualifyExpression p)
 
         Expression.LetExpression letBlock ->
             letBlock.declarations
@@ -739,8 +784,10 @@ qualifyExpression (Node range expression) =
                                 )
                     )
 
-        Expression.CaseExpression _ ->
-            Debug.todo "qualifyExpression - branch 'CaseExpression _' not implemented"
+        Expression.CaseExpression caseExpression ->
+            Monad.map2 (\qe qb -> Node range (CaseExpression qe qb))
+                (qualifyExpression caseExpression.expression)
+                (Monad.combineMap qualifyCase caseExpression.cases)
 
         Expression.LambdaExpression _ ->
             Debug.todo "qualifyExpression - branch 'LambdaExpression _' not implemented"
@@ -770,19 +817,28 @@ qualifyExpression (Node range expression) =
             Debug.todo "qualifyExpression - branch 'GLSLExpression _' not implemented"
 
 
+qualifyCase : Expression.Case -> Monad Case
+qualifyCase ( pattern, expression ) =
+    Monad.map2 Tuple.pair
+        (qualifyPattern pattern)
+        (qualifyExpression expression)
+
+
 qualifyLetDeclaration : Expression.LetDeclaration -> Monad LetDeclaration
 qualifyLetDeclaration declaration =
     case declaration of
-        Expression.LetDestructuring _ _ ->
-            Debug.todo "branch 'LetDestructuring _ _' not implemented"
+        Expression.LetDestructuring p e ->
+            Monad.map2 LetDestructuring
+                (qualifyPattern p)
+                (qualifyExpression e)
 
-        Expression.LetFunction _ ->
-            Debug.todo "branch 'LetFunction _' not implemented"
+        Expression.LetFunction function ->
+            Monad.map LetFunction (qualifyFunctionDeclaration function)
 
 
 qualifyFunctionOrValue : Range -> ModuleName -> String -> Monad (Node Expression)
 qualifyFunctionOrValue range moduleName name context =
-    case qualifyName ( moduleName, name ) context of
+    case qualifyName_ ( moduleName, name ) context of
         Ok ( newContext, ( packageName, qualifiedModuleName, _ ) ) ->
             Ok ( newContext, Node range (FunctionOrValueExpression packageName qualifiedModuleName name) )
 
@@ -795,8 +851,8 @@ qualifyRecordField (Node range ( field, expression )) =
     Monad.map (\qe -> Node range ( field, qe )) (qualifyExpression expression)
 
 
-qualifyImport : Import.Import -> Monad_ Import
-qualifyImport import_ context =
+qualifyImport_ : Import.Import -> Monad_ Import
+qualifyImport_ import_ context =
     let
         imported : ModuleName
         imported =
