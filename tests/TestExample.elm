@@ -13,6 +13,7 @@ import Elm.Syntax.Range as Range
 import Expect
 import Json.Decode
 import Json.Encode
+import Set
 import Test exposing (Test, test)
 
 
@@ -48,11 +49,8 @@ context parsedElmJson =
         |> Elm.Syntax.Qualified.addModule
             (unsafePackageName "elm-explorations/test")
             [ "Test" ]
-            { aliases = Dict.empty
-            , exposingList = Elm.Syntax.Exposing.All Range.emptyRange
-            , types = Dict.empty
-            , values = Dict.empty
-            , ports = Dict.empty
+            { types = Set.empty
+            , values = Set.empty
             }
 
 
