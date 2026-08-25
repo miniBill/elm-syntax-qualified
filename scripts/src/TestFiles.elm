@@ -11,6 +11,7 @@ import Cli.OptionsParser exposing (OptionsParser)
 import Cli.OptionsParser.BuilderState
 import Cli.Program
 import Dict exposing (Dict)
+import Elm.Module
 import Elm.Package
 import Elm.Parser
 import Elm.Project
@@ -18,6 +19,7 @@ import Elm.Syntax.ModuleName exposing (ModuleName)
 import Elm.Syntax.Node as Node exposing (Node(..))
 import Elm.Syntax.Qualified as Qualified
 import Elm.Syntax.Qualified.Utils
+import Elm.Version
 import FatalError exposing (FatalError)
 import Json.Decode
 import Pages.Internal.Platform.Cli as Cli
@@ -102,15 +104,90 @@ checkApplication elmJsonPath application =
             application.dirs |> List.map (\dir -> projectPath ++ "/" ++ dir)
     in
     Do.each sourceDirectories (\dir -> Glob.fromString (dir ++ "/**/*.elm")) <| \filesLists ->
-    filesLists
-        |> List.concat
-        |> checkModules Elm.Syntax.Qualified.Utils.authorProject
+    Do.do
+        (List.foldl
+            (\e a -> a |> BackendTask.andThen (addDirectDependency e))
             (Qualified.initContext
                 { packageName = Elm.Syntax.Qualified.Utils.authorProject
                 , elmJson = Elm.Project.Application application
                 }
+                |> BackendTask.succeed
             )
+            application.depsDirect
+        )
+    <| \context ->
+    filesLists
+        |> List.concat
+        |> checkModules Elm.Syntax.Qualified.Utils.authorProject context
         |> BackendTask.map (\_ -> ())
+
+
+addDirectDependency :
+    ( Elm.Package.Name, Elm.Version.Version )
+    -> Qualified.Context
+    -> BackendTask FatalError Qualified.Context
+addDirectDependency ( packageName, packageVersion ) context =
+    let
+        elmVersion =
+            "0.19.1"
+    in
+    Do.allowFatal (Env.expect "ELM_HOME") <| \elmHome ->
+    let
+        path : String
+        path =
+            [ elmHome
+            , elmVersion
+            , "packages"
+            , Elm.Package.toString packageName
+            , Elm.Version.toString packageVersion
+            ]
+                |> String.join "/"
+    in
+    Do.allowFatal (File.jsonFile Elm.Project.decoder (path ++ "/elm.json")) <| \elmJson ->
+    case elmJson of
+        Elm.Project.Application _ ->
+            -- Should not happen
+            BackendTask.fail (FatalError.fromString "Cannot depend on an application")
+
+        Elm.Project.Package package ->
+            case package.exposed of
+                Elm.Project.ExposedList modules ->
+                    List.foldl
+                        (\e a -> a |> BackendTask.andThen (addDependencyModule packageName path e))
+                        (BackendTask.succeed context)
+                        modules
+
+                Elm.Project.ExposedDict _ ->
+                    Debug.todo "branch 'ExposedDict _' not implemented"
+
+
+addDependencyModule :
+    Elm.Package.Name
+    -> String
+    -> Elm.Module.Name
+    -> Qualified.Context
+    -> BackendTask FatalError Qualified.Context
+addDependencyModule packageName path name context =
+    let
+        moduleName : ModuleName
+        moduleName =
+            Elm.Module.toString name
+                |> String.split "."
+    in
+    Do.allowFatal (File.rawFile (path ++ "/src/" ++ String.join "/" moduleName ++ ".elm")) <| \fileString ->
+    Do.do
+        (Elm.Parser.parseToFile fileString
+            |> Result.mapError (parseErrorToFatalError fileString)
+            |> BackendTask.fromResult
+        )
+    <| \file ->
+    BackendTask.succeed
+        (Qualified.addModule
+            packageName
+            moduleName
+            (Qualified.unqualifiedToModuleInterface file)
+            context
+        )
 
 
 checkModules : Elm.Package.Name -> Qualified.Context -> List String -> BackendTask FatalError Qualified.PackageInterface
