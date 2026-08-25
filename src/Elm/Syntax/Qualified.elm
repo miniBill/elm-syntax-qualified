@@ -243,7 +243,7 @@ type alias ValueConstructor =
 type Expression
     = UnitExpression
     | ApplicationExpression (List (Node Expression))
-    | OperatorApplicationExpression String (Node Expression) (Node Expression)
+    | OperatorApplicationExpression String Infix.InfixDirection (Node Expression) (Node Expression)
     | FunctionOrValueExpression Elm.Package.Name ModuleName String
     | IfBlockExpression (Node Expression) (Node Expression) (Node Expression)
     | PrefixOperatorExpression String
@@ -413,8 +413,8 @@ qualifyDeclaration declaration =
         Declaration.FunctionDeclaration f ->
             Monad.map FunctionDeclaration (qualifyFunctionDeclaration f)
 
-        Declaration.AliasDeclaration _ ->
-            Debug.todo "branch 'AliasDeclaration _' not implemented"
+        Declaration.AliasDeclaration a ->
+            Monad.map AliasDeclaration (qualifyTypeAlias a)
 
         Declaration.CustomTypeDeclaration tipe ->
             Monad.map CustomTypeDeclaration (qualifyType tipe)
@@ -424,6 +424,19 @@ qualifyDeclaration declaration =
 
         Declaration.Destructuring _ _ ->
             Debug.todo "branch 'Destructuring _ _' not implemented"
+
+
+qualifyTypeAlias : TypeAlias.TypeAlias -> Monad TypeAlias
+qualifyTypeAlias alias_ =
+    Monad.map
+        (\typeAnnotation ->
+            { documentation = alias_.documentation
+            , generics = alias_.generics
+            , name = alias_.name
+            , typeAnnotation = typeAnnotation
+            }
+        )
+        (qualifyTypeAnnotation alias_.typeAnnotation)
 
 
 qualifyType : Type.Type -> Monad Type
@@ -532,14 +545,26 @@ qualifyTypeAnnotation (Node range typeAnnotation) =
         TypeAnnotation.Tupled _ ->
             Monad.fail (Node range InvalidSyntax)
 
-        TypeAnnotation.Record _ ->
-            Debug.todo "qualifyTypeAnnotation: branch 'Record _' not implemented"
+        TypeAnnotation.Record fields ->
+            fields
+                |> Monad.combineMap (qualifyNode qualifyRecordFieldAnnotation)
+                |> Monad.map (\qf -> Node range (RecordType qf))
 
         TypeAnnotation.GenericRecord _ _ ->
             Debug.todo "qualifyTypeAnnotation: branch 'GenericRecord _ _' not implemented"
 
-        TypeAnnotation.FunctionTypeAnnotation _ _ ->
-            Debug.todo "qualifyTypeAnnotation: branch 'FunctionTypeAnnotation _ _' not implemented"
+        TypeAnnotation.FunctionTypeAnnotation from to ->
+            Monad.map2
+                (\f t ->
+                    Node range (FunctionType f t)
+                )
+                (qualifyTypeAnnotation from)
+                (qualifyTypeAnnotation to)
+
+
+qualifyRecordFieldAnnotation : TypeAnnotation.RecordField -> Monad RecordField
+qualifyRecordFieldAnnotation ( name, annotation ) =
+    Monad.map (Tuple.pair name) (qualifyTypeAnnotation annotation)
 
 
 qualifyName : ( ModuleName, String ) -> Monad_ ( Elm.Package.Name, ModuleName, String )
@@ -558,7 +583,12 @@ qualifyName ( moduleName, name ) context =
                 Err (ModuleNameIsAmbiguous moduleName)
 
     else
-        Debug.todo "qualifyName 2"
+        case Dict.get moduleName context.availableModules of
+            Nothing ->
+                Err (ModuleNotFound moduleName)
+
+            Just _ ->
+                Debug.todo "branch 'Just _' not implemented"
 
 
 qualifyFunctionImplementation : Expression.FunctionImplementation -> Monad FunctionImplementation
@@ -576,31 +606,74 @@ qualifyFunctionImplementation functionImplementation =
 
 qualifyPattern : Pattern.Pattern -> Monad Pattern
 qualifyPattern pattern =
-    Debug.todo "qualifyPattern"
+    case pattern of
+        Pattern.AllPattern ->
+            Monad.succeed AllPattern
+
+        Pattern.UnitPattern ->
+            Debug.todo "branch 'UnitPattern' not implemented"
+
+        Pattern.CharPattern v ->
+            Monad.succeed (CharPattern v)
+
+        Pattern.StringPattern v ->
+            Monad.succeed (StringPattern v)
+
+        Pattern.IntPattern v ->
+            Monad.succeed (IntPattern v)
+
+        Pattern.HexPattern v ->
+            Monad.succeed (HexPattern v)
+
+        Pattern.FloatPattern v ->
+            Monad.succeed (FloatPattern v)
+
+        Pattern.TuplePattern _ ->
+            Debug.todo "branch 'TuplePattern _' not implemented"
+
+        Pattern.RecordPattern _ ->
+            Debug.todo "branch 'RecordPattern _' not implemented"
+
+        Pattern.UnConsPattern _ _ ->
+            Debug.todo "branch 'UnConsPattern _ _' not implemented"
+
+        Pattern.ListPattern _ ->
+            Debug.todo "branch 'ListPattern _' not implemented"
+
+        Pattern.VarPattern v ->
+            Monad.succeed (VarPattern v)
+
+        Pattern.NamedPattern _ _ ->
+            Debug.todo "branch 'NamedPattern _ _' not implemented"
+
+        Pattern.AsPattern _ _ ->
+            Debug.todo "branch 'AsPattern _ _' not implemented"
+
+        Pattern.ParenthesizedPattern p ->
+            Monad.map ParenthesizedPattern (qualifyNode qualifyPattern p)
 
 
 qualifyExpression : Node Expression.Expression -> Monad (Node Expression)
-qualifyExpression (Node range expression) context =
+qualifyExpression (Node range expression) =
     case expression of
         Expression.UnitExpr ->
-            Ok ( context, Node range UnitExpression )
+            Monad.succeed (Node range UnitExpression)
 
         Expression.Application children ->
             children
                 |> Monad.combineMap qualifyExpression
                 |> Monad.map (\newChildren -> Node range (ApplicationExpression newChildren))
-                |> Monad.run context
 
-        Expression.OperatorApplication _ _ _ _ ->
-            Debug.todo "qualifyExpression - branch 'OperatorApplication _ _ _ _' not implemented"
+        Expression.OperatorApplication name direction l r ->
+            Monad.map2
+                (\lq rq ->
+                    Node range (OperatorApplicationExpression name direction lq rq)
+                )
+                (qualifyExpression l)
+                (qualifyExpression r)
 
         Expression.FunctionOrValue moduleName name ->
-            case qualifyName ( moduleName, name ) context of
-                Ok ( newContext, ( packageName, qualifiedModuleName, _ ) ) ->
-                    Ok ( newContext, Node range (FunctionOrValueExpression packageName qualifiedModuleName name) )
-
-                Err e ->
-                    Err (Node range e)
+            qualifyFunctionOrValue range moduleName name
 
         Expression.IfBlock _ _ _ ->
             Debug.todo "qualifyExpression - branch 'IfBlock _ _ _' not implemented"
@@ -609,36 +682,62 @@ qualifyExpression (Node range expression) context =
             Debug.todo "qualifyExpression - branch 'PrefixOperator _' not implemented"
 
         Expression.Operator _ ->
-            Err (Node range InvalidSyntax)
+            Monad.fail (Node range InvalidSyntax)
 
         Expression.Integer v ->
-            Ok ( context, Node range (IntegerExpression v) )
+            Monad.succeed (Node range (IntegerExpression v))
 
         Expression.Hex v ->
-            Ok ( context, Node range (HexExpression v) )
+            Monad.succeed (Node range (HexExpression v))
 
         Expression.Floatable v ->
-            Ok ( context, Node range (FloatExpression v) )
+            Monad.succeed (Node range (FloatExpression v))
 
         Expression.Negation e ->
             qualifyExpression e
                 |> Monad.map (\c -> Node range (NegationExpression c))
-                |> Monad.run context
 
         Expression.Literal v ->
-            Ok ( context, Node range (StringExpression v) )
+            Monad.succeed (Node range (StringExpression v))
 
         Expression.CharLiteral v ->
-            Ok ( context, Node range (CharExpression v) )
+            Monad.succeed (Node range (CharExpression v))
+
+        Expression.TupledExpression [ l, r ] ->
+            Monad.map2
+                (\ql qr ->
+                    Node range (TupleExpression ql qr)
+                )
+                (qualifyExpression l)
+                (qualifyExpression r)
+
+        Expression.TupledExpression [ l, m, r ] ->
+            Monad.map3
+                (\ql qm qr ->
+                    Node range (TripleExpression ql qm qr)
+                )
+                (qualifyExpression l)
+                (qualifyExpression m)
+                (qualifyExpression r)
 
         Expression.TupledExpression _ ->
-            Debug.todo "qualifyExpression - branch 'TupledExpression _' not implemented"
+            Monad.fail (Node range InvalidSyntax)
 
         Expression.ParenthesizedExpression _ ->
             Debug.todo "qualifyExpression - branch 'ParenthesizedExpression _' not implemented"
 
-        Expression.LetExpression _ ->
-            Debug.todo "qualifyExpression - branch 'LetExpression _' not implemented"
+        Expression.LetExpression letBlock ->
+            letBlock.declarations
+                |> Monad.combineMap (qualifyNode qualifyLetDeclaration)
+                |> Monad.andThen
+                    (\qualifiedDeclarations ->
+                        qualifyExpression letBlock.expression
+                            |> Monad.map
+                                (\qualifiedExpression ->
+                                    Node range
+                                        (LetExpression qualifiedDeclarations qualifiedExpression)
+                                )
+                    )
 
         Expression.CaseExpression _ ->
             Debug.todo "qualifyExpression - branch 'CaseExpression _' not implemented"
@@ -646,14 +745,20 @@ qualifyExpression (Node range expression) context =
         Expression.LambdaExpression _ ->
             Debug.todo "qualifyExpression - branch 'LambdaExpression _' not implemented"
 
-        Expression.RecordExpr _ ->
-            Debug.todo "qualifyExpression - branch 'RecordExpr _' not implemented"
+        Expression.RecordExpr fields ->
+            fields
+                |> Monad.combineMap qualifyRecordField
+                |> Monad.map (\q -> Node range (RecordExpression q))
 
-        Expression.ListExpr _ ->
-            Debug.todo "qualifyExpression - branch 'ListExpr _' not implemented"
+        Expression.ListExpr cs ->
+            cs
+                |> Monad.combineMap qualifyExpression
+                |> Monad.map (\qc -> Node range (ListExpression qc))
 
-        Expression.RecordAccess _ _ ->
-            Debug.todo "qualifyExpression - branch 'RecordAccess _ _' not implemented"
+        Expression.RecordAccess c name ->
+            Monad.map
+                (\qc -> Node range (RecordAccessExpression qc name))
+                (qualifyExpression c)
 
         Expression.RecordAccessFunction _ ->
             Debug.todo "qualifyExpression - branch 'RecordAccessFunction _' not implemented"
@@ -663,6 +768,31 @@ qualifyExpression (Node range expression) context =
 
         Expression.GLSLExpression _ ->
             Debug.todo "qualifyExpression - branch 'GLSLExpression _' not implemented"
+
+
+qualifyLetDeclaration : Expression.LetDeclaration -> Monad LetDeclaration
+qualifyLetDeclaration declaration =
+    case declaration of
+        Expression.LetDestructuring _ _ ->
+            Debug.todo "branch 'LetDestructuring _ _' not implemented"
+
+        Expression.LetFunction _ ->
+            Debug.todo "branch 'LetFunction _' not implemented"
+
+
+qualifyFunctionOrValue : Range -> ModuleName -> String -> Monad (Node Expression)
+qualifyFunctionOrValue range moduleName name context =
+    case qualifyName ( moduleName, name ) context of
+        Ok ( newContext, ( packageName, qualifiedModuleName, _ ) ) ->
+            Ok ( newContext, Node range (FunctionOrValueExpression packageName qualifiedModuleName name) )
+
+        Err e ->
+            Err (Node range e)
+
+
+qualifyRecordField : Node Expression.RecordSetter -> Monad (Node RecordSetter)
+qualifyRecordField (Node range ( field, expression )) =
+    Monad.map (\qe -> Node range ( field, qe )) (qualifyExpression expression)
 
 
 qualifyImport : Import.Import -> Monad_ Import

@@ -140,11 +140,16 @@ checkModules packageName =
                             let
                                 newContext : Qualified.Context
                                 newContext =
-                                    Qualified.addModule
-                                        packageName
-                                        (Node.value qualified.moduleName)
-                                        (Qualified.toModuleInterface qualified)
-                                        context
+                                    let
+                                        _ =
+                                            Debug.todo
+
+                                        -- Qualified.addModule
+                                        --     packageName
+                                        --     (Node.value qualified.moduleName)
+                                        --     (Qualified.toModuleInterface qualified)
+                                    in
+                                    context
                             in
                             go True delayed newContext tail
 
