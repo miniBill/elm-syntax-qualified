@@ -609,12 +609,15 @@ qualifyName_ ( moduleName, name ) context =
                 Err (ModuleNameIsAmbiguous moduleName)
 
     else
-        case Dict.get moduleName context.availableModules of
+        case Dict.get moduleName context.visibleModules of
             Nothing ->
                 Err (ModuleNotFound moduleName)
 
-            Just _ ->
-                Debug.todo "branch 'Just _' not implemented"
+            Just (ResolvesToPackage packageName fullModuleName) ->
+                Ok ( context, ( packageName, fullModuleName, name ) )
+
+            Just IsAmbiguous ->
+                Err (ModuleNameIsAmbiguous moduleName)
 
 
 qualifyFunctionImplementation : Expression.FunctionImplementation -> Monad FunctionImplementation
@@ -719,8 +722,12 @@ qualifyExpression (Node range expression) =
         Expression.FunctionOrValue moduleName name ->
             qualifyFunctionOrValue range moduleName name
 
-        Expression.IfBlock _ _ _ ->
-            Debug.todo "qualifyExpression - branch 'IfBlock _ _ _' not implemented"
+        Expression.IfBlock c t f ->
+            Monad.map3
+                (\cq tq fq -> Node range (IfBlockExpression cq tq fq))
+                (qualifyExpression c)
+                (qualifyExpression t)
+                (qualifyExpression f)
 
         Expression.PrefixOperator _ ->
             Debug.todo "qualifyExpression - branch 'PrefixOperator _' not implemented"
@@ -883,6 +890,7 @@ qualifyImport_ import_ context =
 
                 calculateExpose : Node Exposing.TopLevelExpose -> Result QualifyError (List String)
                 calculateExpose (Node _ expose) =
+                    -- TODO: should separate exposed types and values
                     case expose of
                         Exposing.InfixExpose _ ->
                             Ok []
@@ -893,8 +901,26 @@ qualifyImport_ import_ context =
                         Exposing.TypeOrAliasExpose name ->
                             Ok [ name ]
 
-                        Exposing.TypeExpose _ ->
-                            Debug.todo "qualifyImport - branch TypeExpose"
+                        Exposing.TypeExpose { name, open } ->
+                            case open of
+                                Nothing ->
+                                    Ok [ name ]
+
+                                Just _ ->
+                                    case
+                                        PackageDict.get packageName context.dependencies
+                                            |> Maybe.andThen (Dict.get imported)
+                                    of
+                                        Just importedModuleInterface ->
+                                            case Dict.get name importedModuleInterface.types of
+                                                Just variants ->
+                                                    Ok (name :: variants)
+
+                                                Nothing ->
+                                                    Err (TypeNotFound imported name)
+
+                                        Nothing ->
+                                            Err (ModuleNotFound imported)
             in
             exposedResult
                 |> Result.map
@@ -946,6 +972,7 @@ type QualifyError
     = ModuleNotFound ModuleName
     | ModuleNameIsAmbiguous ModuleName
     | InvalidSyntax
+    | TypeNotFound ModuleName String
 
 
 {-| A dictionary of all values and types a package exposes.
@@ -957,7 +984,7 @@ type alias PackageInterface =
 {-| Values and types exposed by a module.
 -}
 type alias ModuleInterface =
-    { types : Set String
+    { types : Dict String (List String)
     , values : Set String
     }
 
@@ -1071,10 +1098,16 @@ unqualifiedToModuleInterface file =
             let
                 exposeType :
                     Node String
+                    -> List (Node Type.ValueConstructor)
                     -> ModuleInterface
                     -> ModuleInterface
-                exposeType (Node _ name) a =
-                    { a | types = Set.insert name a.types }
+                exposeType (Node _ name) constructors a =
+                    { a
+                        | types =
+                            Dict.insert name
+                                (List.map (\(Node _ c) -> Node.value c.name) constructors)
+                                a.types
+                    }
 
                 exposeValue :
                     Node String
@@ -1104,7 +1137,7 @@ unqualifiedToModuleInterface file =
                     case exposed of
                         Nothing ->
                             acc
-                                |> exposeType name
+                                |> exposeType name constructors
                                 |> exposeVariants constructors
 
                         Just { exposedTypes } ->
@@ -1113,11 +1146,11 @@ unqualifiedToModuleInterface file =
                                     acc
 
                                 Just False ->
-                                    acc |> exposeType name
+                                    acc |> exposeType name []
 
                                 Just True ->
                                     acc
-                                        |> exposeType name
+                                        |> exposeType name constructors
                                         |> exposeVariants constructors
 
                 Declaration.FunctionDeclaration { declaration } ->
@@ -1143,7 +1176,7 @@ unqualifiedToModuleInterface file =
                             case exposed of
                                 Nothing ->
                                     acc
-                                        |> exposeType name
+                                        |> exposeType name []
                                         |> exposeValue name
 
                                 Just { exposedTypes } ->
@@ -1153,14 +1186,14 @@ unqualifiedToModuleInterface file =
 
                                         Just _ ->
                                             acc
-                                                |> exposeType name
+                                                |> exposeType name []
                                                 |> exposeValue name
 
                         _ ->
                             case exposed of
                                 Nothing ->
                                     acc
-                                        |> exposeType name
+                                        |> exposeType name []
 
                                 Just { exposedTypes } ->
                                     case Dict.get (Node.value name) exposedTypes of
@@ -1169,7 +1202,7 @@ unqualifiedToModuleInterface file =
 
                                         Just _ ->
                                             acc
-                                                |> exposeType name
+                                                |> exposeType name []
 
                 Declaration.PortDeclaration { name } ->
                     case exposed of
@@ -1186,7 +1219,7 @@ unqualifiedToModuleInterface file =
                 Declaration.Destructuring _ _ ->
                     acc
         )
-        { types = Set.empty
+        { types = Dict.empty
         , values = Set.empty
         }
         file.declarations
@@ -1237,10 +1270,16 @@ toModuleInterface file =
             let
                 exposeType :
                     Node String
+                    -> List (Node ValueConstructor)
                     -> ModuleInterface
                     -> ModuleInterface
-                exposeType (Node _ name) a =
-                    { a | types = Set.insert name a.types }
+                exposeType (Node _ name) constructors a =
+                    { a
+                        | types =
+                            Dict.insert name
+                                (List.map (\(Node _ c) -> Node.value c.name) constructors)
+                                a.types
+                    }
 
                 exposeValue :
                     Node String
@@ -1270,7 +1309,7 @@ toModuleInterface file =
                     case exposed of
                         Nothing ->
                             acc
-                                |> exposeType name
+                                |> exposeType name constructors
                                 |> exposeVariants constructors
 
                         Just { exposedTypes } ->
@@ -1279,11 +1318,12 @@ toModuleInterface file =
                                     acc
 
                                 Just False ->
-                                    acc |> exposeType name
+                                    acc
+                                        |> exposeType name []
 
                                 Just True ->
                                     acc
-                                        |> exposeType name
+                                        |> exposeType name constructors
                                         |> exposeVariants constructors
 
                 FunctionDeclaration { declaration } ->
@@ -1318,7 +1358,7 @@ toModuleInterface file =
                             else
                                 acc
         )
-        { types = Set.empty
+        { types = Dict.empty
         , values = Set.empty
         }
         file.declarations

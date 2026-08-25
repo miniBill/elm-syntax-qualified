@@ -256,6 +256,9 @@ checkModules packageName =
 
                         Err ( _, Qualified.InvalidSyntax ) ->
                             Debug.todo "branch 'Err (Node _ InvalidSyntax)' not implemented"
+
+                        Err ( _, Qualified.TypeNotFound _ _ ) ->
+                            Debug.todo "branch 'Err ( _, TypeNotFound _ _ )' not implemented"
     in
     go False [] Dict.empty
 
