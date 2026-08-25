@@ -85,3 +85,8 @@ combineMapHelp f list acc context =
 
                 Ok ( newContext, newValue ) ->
                     combineMapHelp f rest (newValue :: acc) newContext
+
+
+run : context -> Monad context error a -> Result error ( context, a )
+run context v =
+    v context

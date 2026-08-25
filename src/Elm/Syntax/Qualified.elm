@@ -312,6 +312,10 @@ type ResolvesTo a
 
 
 type alias Monad a =
+    Monad.Monad (ContextData ModuleName) (Node QualifyError) a
+
+
+type alias Monad_ a =
     Monad.Monad (ContextData ModuleName) QualifyError a
 
 
@@ -320,7 +324,7 @@ type alias Monad a =
 fromUnqualified :
     Context
     -> Elm.Syntax.File.File
-    -> Result QualifyError File
+    -> Result ( Range, QualifyError ) File
 fromUnqualified (Context initialContext) file =
     let
         ( moduleName, exposingList, moduleType ) =
@@ -342,27 +346,28 @@ fromUnqualified (Context initialContext) file =
                     , effectModule.exposingList
                     , Node range (EffectModule { command = effectModule.command, subscription = effectModule.subscription })
                     )
-    in
-    file.imports
-        |> Monad.combineMap qualifyImport
-        |> Monad.andThen
-            (\imports ->
-                file.declarations
-                    |> Monad.combineMap
-                        (qualifyNode qualifyDeclaration)
-                    |> Monad.map
-                        (\declarations ->
-                            { moduleName = moduleName
-                            , exposingList = exposingList
-                            , moduleType = moduleType
-                            , imports = imports
-                            , declarations = declarations
-                            , comments = file.comments
-                            }
-                        )
-            )
-        |> (\f ->
-                f
+
+        result : Result (Node QualifyError) ( ContextData ModuleName, File )
+        result =
+            file.imports
+                |> Monad.combineMap (qualifyNode_ qualifyImport)
+                |> Monad.andThen
+                    (\imports ->
+                        file.declarations
+                            |> Monad.combineMap
+                                (qualifyNode qualifyDeclaration)
+                            |> Monad.map
+                                (\declarations ->
+                                    { moduleName = moduleName
+                                    , exposingList = exposingList
+                                    , moduleType = moduleType
+                                    , imports = imports
+                                    , declarations = declarations
+                                    , comments = file.comments
+                                    }
+                                )
+                    )
+                |> Monad.run
                     { packageName = initialContext.packageName
                     , moduleName = Node.value moduleName
                     , dependencies = initialContext.dependencies
@@ -370,8 +375,13 @@ fromUnqualified (Context initialContext) file =
                     , visibleModules = initialContext.visibleModules
                     , visibleNames = initialContext.visibleNames
                     }
-           )
-        |> Result.map Tuple.second
+    in
+    case result of
+        Ok ( _, v ) ->
+            Ok v
+
+        Err (Node range e) ->
+            Err ( range, e )
 
 
 qualifyDeclaration : Declaration.Declaration -> Monad Declaration
@@ -436,6 +446,16 @@ qualifyNode f (Node range v) context =
             Err e
 
 
+qualifyNode_ : (a -> Monad_ b) -> Node a -> Monad (Node b)
+qualifyNode_ f (Node range v) context =
+    case f v context of
+        Ok ( newContext, w ) ->
+            Ok ( newContext, Node range w )
+
+        Err e ->
+            Err (Node range e)
+
+
 qualifyTypeAnnotation : TypeAnnotation.TypeAnnotation -> Monad TypeAnnotation
 qualifyTypeAnnotation typeAnnotation =
     case typeAnnotation of
@@ -447,7 +467,7 @@ qualifyTypeAnnotation typeAnnotation =
 
         TypeAnnotation.Typed fullTypeName params ->
             Monad.map2 NamedType
-                (qualifyName fullTypeName)
+                (qualifyNode_ qualifyName fullTypeName)
                 (Monad.combineMap (qualifyNode qualifyTypeAnnotation) params)
 
         TypeAnnotation.Tupled _ ->
@@ -463,20 +483,20 @@ qualifyTypeAnnotation typeAnnotation =
             Debug.todo "qualifyTypeAnnotation: branch 'FunctionTypeAnnotation _ _' not implemented"
 
 
-qualifyName : Node ( ModuleName, String ) -> Monad (Node ( Elm.Package.Name, ModuleName, String ))
-qualifyName (Node range ( moduleName, name )) context =
+qualifyName : ( ModuleName, String ) -> Monad_ ( Elm.Package.Name, ModuleName, String )
+qualifyName ( moduleName, name ) context =
     if List.isEmpty moduleName then
         case Dict.get name context.visibleNames of
             Nothing ->
                 -- Must be a local type
-                Ok ( context, Node range ( context.packageName, context.moduleName, name ) )
+                Ok ( context, ( context.packageName, context.moduleName, name ) )
 
             Just (ResolvesToPackage packageName realModuleName) ->
-                Ok ( context, Node range ( packageName, realModuleName, name ) )
+                Ok ( context, ( packageName, realModuleName, name ) )
 
             Just IsAmbiguous ->
                 -- Should not happen for empty module names
-                Err (ModuleNameIsAmbiguous range moduleName)
+                Err (ModuleNameIsAmbiguous moduleName)
 
     else
         Debug.todo "qualifyName 2"
@@ -501,25 +521,27 @@ qualifyPattern pattern =
 
 
 qualifyExpression : Node Expression.Expression -> Monad (Node Expression)
-qualifyExpression (Node range expression) =
+qualifyExpression (Node range expression) context =
     case expression of
         Expression.UnitExpr ->
-            Monad.succeed (Node range UnitExpression)
+            Ok ( context, Node range UnitExpression )
 
         Expression.Application children ->
             children
                 |> Monad.combineMap qualifyExpression
                 |> Monad.map (\newChildren -> Node range (ApplicationExpression newChildren))
+                |> Monad.run context
 
         Expression.OperatorApplication _ _ _ _ ->
             Debug.todo "qualifyExpression - branch 'OperatorApplication _ _ _ _' not implemented"
 
         Expression.FunctionOrValue moduleName name ->
-            qualifyName (Node range ( moduleName, name ))
-                |> Monad.map
-                    (\(Node _ ( packageName, qualifiedModuleName, _ )) ->
-                        Node range (FunctionOrValueExpression packageName qualifiedModuleName name)
-                    )
+            case qualifyName ( moduleName, name ) context of
+                Ok ( newContext, ( packageName, qualifiedModuleName, _ ) ) ->
+                    Ok ( newContext, Node range (FunctionOrValueExpression packageName qualifiedModuleName name) )
+
+                Err e ->
+                    Err (Node range e)
 
         Expression.IfBlock _ _ _ ->
             Debug.todo "qualifyExpression - branch 'IfBlock _ _ _' not implemented"
@@ -528,25 +550,27 @@ qualifyExpression (Node range expression) =
             Debug.todo "qualifyExpression - branch 'PrefixOperator _' not implemented"
 
         Expression.Operator _ ->
-            Debug.todo "qualifyExpression - branch 'Operator _' not implemented"
+            Err (Node range InvalidSyntax)
 
         Expression.Integer v ->
-            Monad.succeed (Node range (IntegerExpression v))
+            Ok ( context, Node range (IntegerExpression v) )
 
         Expression.Hex v ->
-            Monad.succeed (Node range (HexExpression v))
+            Ok ( context, Node range (HexExpression v) )
 
         Expression.Floatable v ->
-            Monad.succeed (Node range (FloatExpression v))
+            Ok ( context, Node range (FloatExpression v) )
 
         Expression.Negation e ->
-            Monad.map (\c -> Node range (NegationExpression c)) (qualifyExpression e)
+            qualifyExpression e
+                |> Monad.map (\c -> Node range (NegationExpression c))
+                |> Monad.run context
 
         Expression.Literal v ->
-            Monad.succeed (Node range (StringExpression v))
+            Ok ( context, Node range (StringExpression v) )
 
         Expression.CharLiteral v ->
-            Monad.succeed (Node range (CharExpression v))
+            Ok ( context, Node range (CharExpression v) )
 
         Expression.TupledExpression _ ->
             Debug.todo "qualifyExpression - branch 'TupledExpression _' not implemented"
@@ -582,8 +606,8 @@ qualifyExpression (Node range expression) =
             Debug.todo "qualifyExpression - branch 'GLSLExpression _' not implemented"
 
 
-qualifyImport : Node Import.Import -> Monad (Node Import)
-qualifyImport (Node range import_) context =
+qualifyImport : Import.Import -> Monad_ Import
+qualifyImport import_ context =
     let
         imported : ModuleName
         imported =
@@ -601,7 +625,7 @@ qualifyImport (Node range import_) context =
                         Just (Node _ (Exposing.All _)) ->
                             case Dict.get imported context.availableModules of
                                 Nothing ->
-                                    Err (ModuleNotFound range imported)
+                                    Err (ModuleNotFound imported)
 
                                 Just _ ->
                                     Debug.todo "qualifyImport - branch 'Just _' not implemented"
@@ -661,20 +685,21 @@ qualifyImport (Node range import_) context =
                                 , exposingList = import_.exposingList
                                 }
                         in
-                        ( newContext, Node range qualifiedImport )
+                        ( newContext, qualifiedImport )
                     )
 
         Just IsAmbiguous ->
-            Err (ModuleNameIsAmbiguous range imported)
+            Err (ModuleNameIsAmbiguous imported)
 
         Nothing ->
-            Err (ModuleNotFound range imported)
+            Err (ModuleNotFound imported)
 
 
 {-| -}
 type QualifyError
-    = ModuleNotFound Range ModuleName
-    | ModuleNameIsAmbiguous Range ModuleName
+    = ModuleNotFound ModuleName
+    | ModuleNameIsAmbiguous ModuleName
+    | InvalidSyntax
 
 
 {-| A dictionary of all values and types a package exposes.
