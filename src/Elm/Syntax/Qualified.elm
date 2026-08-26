@@ -362,52 +362,56 @@ fromUnqualified (Context packageContext) file =
                     , Node range (EffectModule { command = effectModule.command, subscription = effectModule.subscription })
                     )
 
-        initialContextResult : Result (Node QualifyError) (ContextData ModuleName)
-        initialContextResult =
-            Result.Extra.foldlWhileOk
-                addDeclarationToContext
-                { packageName = packageContext.packageName
-                , moduleName = Node.value moduleName
-                , availableModules = packageContext.availableModules
-                , visibleModules = packageContext.visibleModules
-                , visibleTypes = packageContext.visibleTypes
-                , visibleValues = packageContext.visibleValues
-                }
-                file.declarations
+        initialContext : ContextData ModuleName
+        initialContext =
+            { packageName = packageContext.packageName
+            , moduleName = Node.value moduleName
+            , availableModules = packageContext.availableModules
+            , visibleModules = packageContext.visibleModules
+            , visibleTypes = packageContext.visibleTypes
+            , visibleValues = packageContext.visibleValues
+            }
+
+        result : Result (Node QualifyError) ( ContextData ModuleName, File )
+        result =
+            file.imports
+                |> Monad.combineMap qualifyImport
+                |> Monad.onContextThen
+                    (\c ->
+                        Result.Extra.foldlWhileOk
+                            addDeclarationToContext
+                            c
+                            file.declarations
+                    )
+                |> Monad.andThen
+                    (\imports ->
+                        file.declarations
+                            |> Monad.combineMap
+                                (\decl ->
+                                    decl
+                                        |> qualifyDeclaration
+                                        -- We already added the names to the initial context, avoid duplication
+                                        |> Monad.scope
+                                )
+                            |> Monad.map
+                                (\declarations ->
+                                    { moduleName = moduleName
+                                    , exposingList = exposingList
+                                    , moduleType = moduleType
+                                    , imports = imports
+                                    , declarations = declarations
+                                    , comments = file.comments
+                                    }
+                                )
+                    )
+                |> Monad.run initialContext
     in
-    case initialContextResult of
+    case result of
+        Ok ( _, v ) ->
+            Ok v
+
         Err (Node range e) ->
             Err ( range, e )
-
-        Ok initialContext ->
-            let
-                result : Result (Node QualifyError) ( ContextData ModuleName, File )
-                result =
-                    file.imports
-                        |> Monad.combineMap qualifyImport
-                        |> Monad.andThen
-                            (\imports ->
-                                file.declarations
-                                    |> Monad.combineMap qualifyDeclaration
-                                    |> Monad.map
-                                        (\declarations ->
-                                            { moduleName = moduleName
-                                            , exposingList = exposingList
-                                            , moduleType = moduleType
-                                            , imports = imports
-                                            , declarations = declarations
-                                            , comments = file.comments
-                                            }
-                                        )
-                            )
-                        |> Monad.run initialContext
-            in
-            case result of
-                Ok ( _, v ) ->
-                    Ok v
-
-                Err (Node range e) ->
-                    Err ( range, e )
 
 
 addDeclarationToContext :
@@ -684,7 +688,7 @@ qualifyTypeName_ ( moduleName, name ) context =
                 Ok ( context, ( packageName, realModuleName, name ) )
 
             Just (IsAmbiguous alts) ->
-                Err (ModuleNameIsAmbiguous moduleName (List.map Tuple.first alts))
+                Err (ValueIsAmbiguous name (List.map Tuple.first alts))
 
     else
         case Dict.get moduleName context.visibleModules of
@@ -918,7 +922,12 @@ qualifyExpression (Node range expression) =
                 |> Monad.andThen
                     (\() ->
                         letBlock.declarations
-                            |> Monad.combineMap (qualifyNode qualifyLetDeclaration)
+                            |> Monad.combineMap
+                                (\decl ->
+                                    qualifyNode qualifyLetDeclaration decl
+                                        -- We already added all the names above, we don't want duplicates
+                                        |> Monad.scope
+                                )
                             |> Monad.andThen
                                 (\qualifiedDeclarations ->
                                     qualifyExpression letBlock.expression
@@ -1088,7 +1097,7 @@ qualifyImport_ import_ context =
                                     Ok ( [ name ], variants )
 
                                 Nothing ->
-                                    Err (TypeNotFound imported name)
+                                    Err (ValueNotFound imported name)
 
                         Exposing.TypeExpose { name, open } ->
                             case open of
@@ -1101,7 +1110,7 @@ qualifyImport_ import_ context =
                                             Ok ( [ name ], variants )
 
                                         Nothing ->
-                                            Err (TypeNotFound imported name)
+                                            Err (ValueNotFound imported name)
             in
             exposedResult
                 |> Result.map
@@ -1161,8 +1170,9 @@ qualifyImport_ import_ context =
 type QualifyError
     = ModuleNotFound ModuleName
     | ModuleNameIsAmbiguous ModuleName (List Elm.Package.Name)
+    | ValueIsAmbiguous String (List Elm.Package.Name)
     | InvalidSyntax
-    | TypeNotFound ModuleName String
+    | ValueNotFound ModuleName String
     | UnqualifiedNameNotFound String
 
 

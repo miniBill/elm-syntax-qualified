@@ -1,4 +1,4 @@
-module Elm.Syntax.Qualified.Monad exposing (Monad, andThen, combineMap, fail, map, map2, map3, onContext, run, scope, succeed)
+module Elm.Syntax.Qualified.Monad exposing (Monad, andThen, combineMap, fail, map, map2, map3, onContext, onContextThen, run, scope, succeed)
 
 
 type alias Monad context error a =
@@ -120,3 +120,18 @@ onContext :
     -> Monad context error a
 onContext f v context =
     v context |> Result.map (Tuple.mapFirst f)
+
+
+onContextThen : (context -> Result error context) -> Monad context error a -> Monad context error a
+onContextThen f v context =
+    case v context of
+        Err e ->
+            Err e
+
+        Ok ( newContext, w ) ->
+            case f newContext of
+                Err e ->
+                    Err e
+
+                Ok adjustedContext ->
+                    Ok ( adjustedContext, w )

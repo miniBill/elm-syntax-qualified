@@ -288,9 +288,21 @@ checkModules packageName initialContext initialQueue =
                                 , file = fileString
                                 , range = range
                                 , message =
-                                    "module name "
+                                    "module name `"
                                         ++ String.join "." moduleName
-                                        ++ " is ambiguous between: "
+                                        ++ "` is ambiguous between: "
+                                        ++ String.join ", " (List.map Elm.Package.toString alts)
+                                }
+
+                        Err ( range, Qualified.ValueIsAmbiguous name alts ) ->
+                            formatError
+                                { filename = head
+                                , file = fileString
+                                , range = range
+                                , message =
+                                    "value `"
+                                        ++ name
+                                        ++ "` is ambiguous between: "
                                         ++ String.join ", " (List.map Elm.Package.toString alts)
                                 }
 
@@ -302,7 +314,7 @@ checkModules packageName initialContext initialQueue =
                                 , message = "invalid syntax"
                                 }
 
-                        Err ( range, Qualified.TypeNotFound moduleName typeName ) ->
+                        Err ( range, Qualified.ValueNotFound moduleName typeName ) ->
                             formatError
                                 { filename = head
                                 , file = fileString
