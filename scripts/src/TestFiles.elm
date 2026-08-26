@@ -23,6 +23,7 @@ import Elm.Syntax.Qualified.Utils
 import Elm.Syntax.Range exposing (Range)
 import Elm.Version
 import FatalError exposing (FatalError)
+import List.Extra
 import Pages.Script as Script exposing (Script)
 import Parser
 import Parser.Error
@@ -327,17 +328,21 @@ formatError { filename, file, range, message } =
                 |> String.lines
                 |> List.drop (range.start.row - 2)
 
-        before : List String
-        before =
-            split |> List.take 1
+        ( before, atAndAfter ) =
+            if range.start.row == 1 then
+                ( [], split )
 
-        at : List String
-        at =
-            split |> List.drop 1 |> List.take (range.end.row - range.start.row + 1)
+            else
+                List.Extra.splitAt 1 split
+
+        ( at, afterAndTail ) =
+            atAndAfter
+                |> List.Extra.splitAt
+                    (range.end.row - range.start.row + 1)
 
         after : List String
         after =
-            split |> List.drop range.start.row |> List.take 1
+            afterAndTail |> List.take 1
 
         source : String
         source =
