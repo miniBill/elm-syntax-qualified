@@ -80,7 +80,7 @@ config =
     , NoDuplicatePorts.rule
     , NoExposingEverything.rule
     , NoImportingEverything.rule []
-    , NoInternalImports.rule []
+    , NoInternalImports.rule [ "../src" ]
     , NoInvalidRGBValues.rule
     , NoMissingSubscriptionsCall.rule
     , NoMissingTypeAnnotation.rule
