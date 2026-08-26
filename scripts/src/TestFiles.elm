@@ -282,12 +282,16 @@ checkModules packageName initialContext initialQueue =
                                             ++ String.join ", " (List.map (String.join ".") (Set.toList localNames))
                                     }
 
-                        Err ( range, Qualified.ModuleNameIsAmbiguous moduleName ) ->
+                        Err ( range, Qualified.ModuleNameIsAmbiguous moduleName alts ) ->
                             formatError
                                 { filename = head
                                 , file = fileString
                                 , range = range
-                                , message = "module name is ambiguous: " ++ String.join "." moduleName
+                                , message =
+                                    "module name "
+                                        ++ String.join "." moduleName
+                                        ++ " is ambiguous between: "
+                                        ++ String.join ", " (List.map Elm.Package.toString alts)
                                 }
 
                         Err ( range, Qualified.InvalidSyntax ) ->

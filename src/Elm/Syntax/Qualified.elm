@@ -323,7 +323,7 @@ type alias ContextData moduleName =
 
 type ResolvesTo a
     = ResolvesToPackage Elm.Package.Name a
-    | IsAmbiguous
+    | IsAmbiguous (List ( Elm.Package.Name, a ))
 
 
 type alias Monad a =
@@ -683,8 +683,8 @@ qualifyTypeName_ ( moduleName, name ) context =
             Just (ResolvesToPackage packageName realModuleName) ->
                 Ok ( context, ( packageName, realModuleName, name ) )
 
-            Just IsAmbiguous ->
-                Err (ModuleNameIsAmbiguous moduleName)
+            Just (IsAmbiguous alts) ->
+                Err (ModuleNameIsAmbiguous moduleName (List.map Tuple.first alts))
 
     else
         case Dict.get moduleName context.visibleModules of
@@ -694,8 +694,8 @@ qualifyTypeName_ ( moduleName, name ) context =
             Just (ResolvesToPackage packageName fullModuleName) ->
                 Ok ( context, ( packageName, fullModuleName, name ) )
 
-            Just IsAmbiguous ->
-                Err (ModuleNameIsAmbiguous moduleName)
+            Just (IsAmbiguous alts) ->
+                Err (ModuleNameIsAmbiguous moduleName (List.map Tuple.first alts))
 
 
 qualifyValue : Node ( ModuleName, String ) -> Monad (Node ( Elm.Package.Name, ModuleName, String ))
@@ -713,8 +713,8 @@ qualifyValue_ ( moduleName, name ) context =
             Just (ResolvesToPackage packageName realModuleName) ->
                 Ok ( context, ( packageName, realModuleName, name ) )
 
-            Just IsAmbiguous ->
-                Err (ModuleNameIsAmbiguous moduleName)
+            Just (IsAmbiguous alts) ->
+                Err (ModuleNameIsAmbiguous moduleName (List.map Tuple.first alts))
 
     else
         case Dict.get moduleName context.visibleModules of
@@ -724,8 +724,8 @@ qualifyValue_ ( moduleName, name ) context =
             Just (ResolvesToPackage packageName fullModuleName) ->
                 Ok ( context, ( packageName, fullModuleName, name ) )
 
-            Just IsAmbiguous ->
-                Err (ModuleNameIsAmbiguous moduleName)
+            Just (IsAmbiguous alts) ->
+                Err (ModuleNameIsAmbiguous moduleName (List.map Tuple.first alts))
 
 
 qualifyFunctionImplementation : Expression.FunctionImplementation -> Monad FunctionImplementation
@@ -1061,7 +1061,7 @@ qualifyImport_ import_ context =
                             Ok ( [], [] )
 
                         Just (Node _ (Exposing.All _)) ->
-                            Debug.todo "qualifyImport - branch 'Exposing.All _' not implemented"
+                            Ok ( Dict.keys moduleInterface.types, Set.toList moduleInterface.values )
 
                         Just (Node _ (Exposing.Explicit list)) ->
                             list
@@ -1150,8 +1150,8 @@ qualifyImport_ import_ context =
                         ( newContext, qualifiedImport )
                     )
 
-        Just IsAmbiguous ->
-            Err (ModuleNameIsAmbiguous imported)
+        Just (IsAmbiguous alts) ->
+            Err (ModuleNameIsAmbiguous imported (List.map Tuple.first alts))
 
         Nothing ->
             Err (ModuleNotFound imported)
@@ -1160,7 +1160,7 @@ qualifyImport_ import_ context =
 {-| -}
 type QualifyError
     = ModuleNotFound ModuleName
-    | ModuleNameIsAmbiguous ModuleName
+    | ModuleNameIsAmbiguous ModuleName (List Elm.Package.Name)
     | InvalidSyntax
     | TypeNotFound ModuleName String
     | UnqualifiedNameNotFound String
@@ -1300,11 +1300,19 @@ insertResolvesTo key packageName value dict =
     Dict.update key
         (\existing ->
             case existing of
-                Just _ ->
-                    Just IsAmbiguous
+                Just (ResolvesToPackage existingPackageName existingValue) ->
+                    Just
+                        (IsAmbiguous
+                            [ ( packageName, value )
+                            , ( existingPackageName, existingValue )
+                            ]
+                        )
 
                 Nothing ->
                     Just (ResolvesToPackage packageName value)
+
+                Just (IsAmbiguous alts) ->
+                    Just (IsAmbiguous (( packageName, value ) :: alts))
         )
         dict
 
