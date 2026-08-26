@@ -14,7 +14,6 @@ module Elm.Syntax.Qualified exposing
 
 import Dict exposing (Dict)
 import Elm.Package
-import Elm.Project
 import Elm.Syntax.Declaration as Declaration
 import Elm.Syntax.Documentation exposing (Documentation)
 import Elm.Syntax.Exposing as Exposing exposing (Exposing)
@@ -1113,8 +1112,8 @@ type alias ModuleInterface =
 
 {-| Build a `Context`.
 -}
-initContext : { packageName : Elm.Package.Name, elmJson : Elm.Project.Project } -> PackageContext
-initContext { packageName, elmJson } =
+initContext : { packageName : Elm.Package.Name } -> PackageContext
+initContext { packageName } =
     Context
         { packageName = packageName
         , moduleName = ()

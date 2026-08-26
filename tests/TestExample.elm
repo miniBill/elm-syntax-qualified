@@ -1,15 +1,11 @@
-module TestExample exposing (..)
+module TestExample exposing (suite)
 
 import Dict
 import Elm.Package as Package
 import Elm.Parser
-import Elm.Project as Project exposing (Project)
-import Elm.Syntax.Exposing
-import Elm.Syntax.File
+import Elm.Project as Project
 import Elm.Syntax.Qualified
-import Elm.Syntax.Qualified.PackageDict as PackageDict
 import Elm.Syntax.Qualified.Utils as Utils
-import Elm.Syntax.Range as Range
 import Expect
 import Json.Decode
 import Json.Encode
@@ -34,18 +30,16 @@ suite =
                     -- These are test bugs, not library bugs, whatever
                     Expect.fail (Debug.toString parseError)
 
-                ( Ok parsedElmJson, Ok parsedFile ) ->
+                ( Ok _, Ok parsedFile ) ->
                     parsedFile
-                        |> Elm.Syntax.Qualified.fromUnqualified (context parsedElmJson)
+                        |> Elm.Syntax.Qualified.fromUnqualified context
                         |> Expect.ok
 
 
-context : Project -> Elm.Syntax.Qualified.PackageContext
-context parsedElmJson =
+context : Elm.Syntax.Qualified.PackageContext
+context =
     Elm.Syntax.Qualified.initContext
-        { packageName = Utils.authorProject
-        , elmJson = parsedElmJson
-        }
+        { packageName = Utils.authorProject }
         |> Elm.Syntax.Qualified.addModule
             (unsafePackageName "elm-explorations/test")
             [ "Test" ]

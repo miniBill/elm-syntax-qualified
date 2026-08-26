@@ -17,14 +17,12 @@ import Elm.Package
 import Elm.Parser
 import Elm.Project
 import Elm.Syntax.ModuleName exposing (ModuleName)
-import Elm.Syntax.Node as Node exposing (Node(..))
+import Elm.Syntax.Node as Node
 import Elm.Syntax.Qualified as Qualified
 import Elm.Syntax.Qualified.Utils
 import Elm.Syntax.Range exposing (Range)
 import Elm.Version
 import FatalError exposing (FatalError)
-import Json.Decode
-import Pages.Internal.Platform.Cli as Cli
 import Pages.Script as Script exposing (Script)
 import Parser
 import Parser.Error
@@ -123,9 +121,7 @@ checkApplication elmJsonPath application =
         (BackendTask.Extra.foldl
             addDirectDependency
             (Qualified.initContext
-                { packageName = Elm.Syntax.Qualified.Utils.authorProject
-                , elmJson = Elm.Project.Application application
-                }
+                { packageName = Elm.Syntax.Qualified.Utils.authorProject }
             )
             application.depsDirect
         )

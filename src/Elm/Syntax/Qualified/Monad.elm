@@ -1,4 +1,4 @@
-module Elm.Syntax.Qualified.Monad exposing (Monad, andMap, andThen, combineMap, fail, map, map2, map3, run, succeed)
+module Elm.Syntax.Qualified.Monad exposing (Monad, andThen, combineMap, fail, map, map2, map3, run, succeed)
 
 
 type alias Monad context error a =
