@@ -322,18 +322,18 @@ formatError :
     -> BackendTask FatalError e
 formatError { filename, file, range, message } =
     let
+        context : number
+        context =
+            3
+
         split : List String
         split =
             file
                 |> String.lines
-                |> List.drop (range.start.row - 2)
+                |> List.drop (range.start.row - context - 1)
 
         ( before, atAndAfter ) =
-            if range.start.row == 1 then
-                ( [], split )
-
-            else
-                List.Extra.splitAt 1 split
+            List.Extra.splitAt (min context (range.start.row - 1)) split
 
         ( at, afterAndTail ) =
             atAndAfter
@@ -342,7 +342,7 @@ formatError { filename, file, range, message } =
 
         after : List String
         after =
-            afterAndTail |> List.take 1
+            afterAndTail |> List.take context
 
         source : String
         source =

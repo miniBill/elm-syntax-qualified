@@ -1,4 +1,4 @@
-module Elm.Syntax.Qualified.Monad exposing (Monad, andThen, combineMap, fail, map, map2, map3, run, succeed)
+module Elm.Syntax.Qualified.Monad exposing (Monad, andThen, combineMap, fail, map, map2, map3, run, scope, succeed)
 
 
 type alias Monad context error a =
@@ -72,6 +72,16 @@ andThen f v context =
 
         Ok ( newContext, w ) ->
             f w newContext
+
+
+scope : Monad context error a -> Monad context error a
+scope v context =
+    case v context of
+        Err e ->
+            Err e
+
+        Ok ( _, w ) ->
+            Ok ( context, w )
 
 
 combineMap : (a -> Monad context error b) -> List a -> Monad context error (List b)

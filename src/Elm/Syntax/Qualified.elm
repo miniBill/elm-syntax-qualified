@@ -727,15 +727,19 @@ qualifyValue_ ( moduleName, name ) context =
 
 qualifyFunctionImplementation : Expression.FunctionImplementation -> Monad FunctionImplementation
 qualifyFunctionImplementation functionImplementation =
-    Monad.map2
-        (\arguments expression ->
-            { name = functionImplementation.name
-            , arguments = arguments
-            , expression = expression
-            }
-        )
-        (Monad.combineMap qualifyPattern functionImplementation.arguments)
-        (qualifyExpression functionImplementation.expression)
+    Monad.combineMap qualifyPattern functionImplementation.arguments
+        |> Monad.andThen
+            (\arguments ->
+                qualifyExpression functionImplementation.expression
+                    |> Monad.map
+                        (\expression ->
+                            { name = functionImplementation.name
+                            , arguments = arguments
+                            , expression = expression
+                            }
+                        )
+            )
+        |> Monad.scope
 
 
 qualifyPattern : Node Pattern.Pattern -> Monad (Node Pattern)
@@ -793,7 +797,7 @@ qualifyPattern (Node range pattern) =
                 |> Monad.map (\qc -> Node range (ListPattern qc))
 
         Pattern.VarPattern v ->
-            Monad.succeed (Node range (VarPattern v))
+            \context -> Ok ( addLocalValueToContext v context, Node range (VarPattern v) )
 
         Pattern.NamedPattern qualified patterns ->
             Monad.map2
@@ -809,6 +813,14 @@ qualifyPattern (Node range pattern) =
 
         Pattern.ParenthesizedPattern p ->
             Monad.map (\qp -> Node range (ParenthesizedPattern qp)) (qualifyPattern p)
+
+
+addLocalValueToContext : String -> ContextData ModuleName -> ContextData ModuleName
+addLocalValueToContext name context =
+    { context
+        | visibleValues =
+            Dict.insert name (ResolvesToPackage context.packageName context.moduleName) context.visibleValues
+    }
 
 
 qualifyExpression : Node Expression.Expression -> Monad (Node Expression)
@@ -840,8 +852,8 @@ qualifyExpression (Node range expression) =
                 (qualifyExpression t)
                 (qualifyExpression f)
 
-        Expression.PrefixOperator _ ->
-            Debug.todo "qualifyExpression - branch 'PrefixOperator _' not implemented"
+        Expression.PrefixOperator p ->
+            Monad.succeed (Node range (PrefixOperatorExpression p))
 
         Expression.Operator _ ->
             Monad.fail (Node range InvalidSyntax)
@@ -929,11 +941,16 @@ qualifyExpression (Node range expression) =
         Expression.RecordAccessFunction _ ->
             Debug.todo "qualifyExpression - branch 'RecordAccessFunction _' not implemented"
 
-        Expression.RecordUpdateExpression _ _ ->
-            Debug.todo "qualifyExpression - branch 'RecordUpdateExpression _ _' not implemented"
+        Expression.RecordUpdateExpression n rs ->
+            rs
+                |> Monad.combineMap
+                    (\(Node updaterRange ( k, v )) ->
+                        Monad.map (\qv -> Node updaterRange ( k, qv )) (qualifyExpression v)
+                    )
+                |> Monad.map (\qrs -> Node range (RecordUpdateExpression n qrs))
 
-        Expression.GLSLExpression _ ->
-            Debug.todo "qualifyExpression - branch 'GLSLExpression _' not implemented"
+        Expression.GLSLExpression t ->
+            Monad.succeed (Node range (GLSLExpression t))
 
 
 qualifyCase : Expression.Case -> Monad Case
