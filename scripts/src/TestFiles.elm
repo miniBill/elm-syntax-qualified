@@ -19,6 +19,7 @@ import Elm.Syntax.ModuleName exposing (ModuleName)
 import Elm.Syntax.Node as Node exposing (Node(..))
 import Elm.Syntax.Qualified as Qualified
 import Elm.Syntax.Qualified.Utils
+import Elm.Syntax.Range exposing (Range)
 import Elm.Version
 import FatalError exposing (FatalError)
 import Json.Decode
@@ -272,49 +273,85 @@ checkModules packageName initialContext initialQueue =
                                 go addedAny (head :: delayed) moduleDict context tail
 
                             else
-                                let
-                                    split : List String
-                                    split =
-                                        fileString
-                                            |> String.lines
-                                            |> List.drop (range.start.row - 2)
+                                formatError
+                                    { filename = head
+                                    , file = fileString
+                                    , range = range
+                                    , message = "missing module: " ++ String.join "." moduleName
+                                    }
 
-                                    before : List String
-                                    before =
-                                        split |> List.take 1
+                        Err ( range, Qualified.ModuleNameIsAmbiguous moduleName ) ->
+                            formatError
+                                { filename = head
+                                , file = fileString
+                                , range = range
+                                , message = "module name is ambiguous: " ++ String.join "." moduleName
+                                }
 
-                                    at : List String
-                                    at =
-                                        split |> List.drop 1 |> List.take (range.end.row - range.start.row + 1)
+                        Err ( range, Qualified.InvalidSyntax ) ->
+                            formatError
+                                { filename = head
+                                , file = fileString
+                                , range = range
+                                , message = "invalid syntax"
+                                }
 
-                                    after : List String
-                                    after =
-                                        split |> List.drop range.start.row |> List.take 1
+                        Err ( range, Qualified.TypeNotFound moduleName typeName ) ->
+                            formatError
+                                { filename = head
+                                , file = fileString
+                                , range = range
+                                , message = "type not found: " ++ String.join "." (moduleName ++ [ typeName ])
+                                }
 
-                                    source : String
-                                    source =
-                                        before
-                                            ++ List.map (Ansi.Color.fontColor Ansi.Color.red) at
-                                            ++ after
-                                            |> String.join "\n"
-                                in
-                                ("In file " ++ head ++ ", missing module: " ++ String.join "." moduleName ++ "\n\n" ++ source)
-                                    |> FatalError.fromString
-                                    |> BackendTask.fail
-
-                        Err ( _, Qualified.ModuleNameIsAmbiguous _ ) ->
-                            Debug.todo "branch 'Err (Node _ (ModuleNameIsAmbiguous _))' not implemented"
-
-                        Err ( _, Qualified.InvalidSyntax ) ->
-                            Debug.todo "branch 'Err (Node _ InvalidSyntax)' not implemented"
-
-                        Err ( _, Qualified.TypeNotFound _ _ ) ->
-                            Debug.todo "branch 'Err ( _, TypeNotFound _ _ )' not implemented"
-
-                        Err ( _, Qualified.UnqualifiedNameNotFound _ ) ->
-                            Debug.todo "branch 'Err ( _, UnqualifiedNameNotFound _ )' not implemented"
+                        Err ( range, Qualified.UnqualifiedNameNotFound name ) ->
+                            formatError
+                                { filename = head
+                                , file = fileString
+                                , range = range
+                                , message = "value not found: " ++ name
+                                }
     in
     go False [] Dict.empty initialContext (List.map Tuple.second initialQueue)
+
+
+formatError :
+    { filename : String
+    , file : String
+    , range : Range
+    , message : String
+    }
+    -> BackendTask FatalError e
+formatError { filename, file, range, message } =
+    let
+        split : List String
+        split =
+            file
+                |> String.lines
+                |> List.drop (range.start.row - 2)
+
+        before : List String
+        before =
+            split |> List.take 1
+
+        at : List String
+        at =
+            split |> List.drop 1 |> List.take (range.end.row - range.start.row + 1)
+
+        after : List String
+        after =
+            split |> List.drop range.start.row |> List.take 1
+
+        source : String
+        source =
+            before
+                ++ List.map (Ansi.Color.fontColor Ansi.Color.red) at
+                ++ after
+                |> String.join "\n"
+    in
+    ("In file " ++ filename ++ ", " ++ message ++ "\n\n" ++ source)
+        |> FatalError.fromString
+        |> BackendTask.fail
 
 
 parseErrorToFatalError : String -> List Parser.DeadEnd -> FatalError
