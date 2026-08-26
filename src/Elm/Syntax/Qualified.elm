@@ -308,12 +308,18 @@ type alias EffectModuleData =
 {-| Parsing context.
 -}
 type PackageContext
-    = Context (ContextData ())
+    = Context
+        { packageName : Elm.Package.Name
+        , availableModules : Dict ModuleName (ResolvesTo ModuleInterface)
+        , visibleModules : Dict ModuleName (ResolvesTo ModuleName)
+        , visibleTypes : Dict String (ResolvesTo ModuleName)
+        , visibleValues : Dict String (ResolvesTo ModuleName)
+        }
 
 
-type alias ContextData moduleName =
+type alias ContextData =
     { packageName : Elm.Package.Name
-    , moduleName : moduleName
+    , moduleName : ModuleName
     , availableModules : Dict ModuleName (ResolvesTo ModuleInterface)
     , visibleModules : Dict ModuleName (ResolvesTo ModuleName)
     , visibleTypes : Dict String (ResolvesTo ModuleName)
@@ -327,11 +333,11 @@ type ResolvesTo a
 
 
 type alias Monad a =
-    Monad.Monad (ContextData ModuleName) (Node QualifyError) a
+    Monad.Monad ContextData (Node QualifyError) a
 
 
 type alias Monad_ a =
-    Monad.Monad (ContextData ModuleName) QualifyError a
+    Monad.Monad ContextData QualifyError a
 
 
 {-| Try building a fully-qualified `File` from an elm-syntax `File`.
@@ -362,7 +368,7 @@ fromUnqualified (Context packageContext) file =
                     , Node range (EffectModule { command = effectModule.command, subscription = effectModule.subscription })
                     )
 
-        initialContext : ContextData ModuleName
+        initialContext : ContextData
         initialContext =
             { packageName = packageContext.packageName
             , moduleName = Node.value moduleName
@@ -372,7 +378,7 @@ fromUnqualified (Context packageContext) file =
             , visibleValues = packageContext.visibleValues
             }
 
-        result : Result (Node QualifyError) ( ContextData ModuleName, File )
+        result : Result (Node QualifyError) ( ContextData, File )
         result =
             file.imports
                 |> Monad.combineMap qualifyImport
@@ -416,8 +422,8 @@ fromUnqualified (Context packageContext) file =
 
 addDeclarationToContext :
     Node Declaration.Declaration
-    -> ContextData ModuleName
-    -> Result (Node QualifyError) (ContextData ModuleName)
+    -> ContextData
+    -> Result (Node QualifyError) ContextData
 addDeclarationToContext (Node range decl) context =
     case decl of
         Declaration.InfixDeclaration _ ->
@@ -829,7 +835,7 @@ qualifyPattern (Node range pattern) =
             Monad.map (\qp -> Node range (ParenthesizedPattern qp)) (qualifyPattern p)
 
 
-addLocalValueToContext : String -> ContextData ModuleName -> ContextData ModuleName
+addLocalValueToContext : String -> ContextData -> ContextData
 addLocalValueToContext name context =
     { context
         | visibleValues =
@@ -1116,7 +1122,7 @@ qualifyImport_ import_ context =
                 |> Result.map
                     (\( exposedTypes, exposedValues ) ->
                         let
-                            newContext : ContextData ModuleName
+                            newContext : ContextData
                             newContext =
                                 { context
                                     | visibleModules =
@@ -1196,7 +1202,6 @@ initContext : { packageName : Elm.Package.Name } -> PackageContext
 initContext { packageName } =
     Context
         { packageName = packageName
-        , moduleName = ()
         , availableModules = Dict.empty
         , visibleModules = defaultVisibleModules
         , visibleTypes = defaultVisibleTypes
