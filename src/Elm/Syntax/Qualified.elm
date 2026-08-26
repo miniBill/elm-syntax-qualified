@@ -920,8 +920,9 @@ qualifyExpression (Node range expression) =
                 (qualifyExpression caseExpression.expression)
                 (Monad.combineMap qualifyCase caseExpression.cases)
 
-        Expression.LambdaExpression _ ->
-            Debug.todo "qualifyExpression - branch 'LambdaExpression _' not implemented"
+        Expression.LambdaExpression lambda ->
+            qualifyLambdaExpression lambda
+                |> Monad.map (\( qp, qe ) -> Node range (LambdaExpression qp qe))
 
         Expression.RecordExpr fields ->
             fields
@@ -938,8 +939,8 @@ qualifyExpression (Node range expression) =
                 (\qc -> Node range (RecordAccessExpression qc name))
                 (qualifyExpression c)
 
-        Expression.RecordAccessFunction _ ->
-            Debug.todo "qualifyExpression - branch 'RecordAccessFunction _' not implemented"
+        Expression.RecordAccessFunction n ->
+            Monad.succeed (Node range (RecordAccessFunctionExpression n))
 
         Expression.RecordUpdateExpression n rs ->
             rs
@@ -951,6 +952,18 @@ qualifyExpression (Node range expression) =
 
         Expression.GLSLExpression t ->
             Monad.succeed (Node range (GLSLExpression t))
+
+
+qualifyLambdaExpression : Expression.Lambda -> Monad ( List (Node Pattern), Node Expression )
+qualifyLambdaExpression { args, expression } =
+    args
+        |> Monad.combineMap qualifyPattern
+        |> Monad.andThen
+            (\qps ->
+                qualifyExpression expression
+                    |> Monad.map (\e -> ( qps, e ))
+            )
+        |> Monad.scope
 
 
 qualifyCase : Expression.Case -> Monad Case
