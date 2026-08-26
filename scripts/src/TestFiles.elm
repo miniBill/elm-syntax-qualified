@@ -192,19 +192,20 @@ addDependencyModule packageName path name context =
                 |> String.split "."
     in
     Do.allowFatal (File.rawFile (path ++ "/src/" ++ String.join "/" moduleName ++ ".elm")) <| \fileString ->
-    Do.do
-        (Elm.Parser.parseToFile fileString
-            |> Result.mapError (parseErrorToFatalError fileString)
-            |> BackendTask.fromResult
-        )
-    <| \file ->
-    BackendTask.succeed
-        (Qualified.addModule
-            packageName
-            moduleName
-            (Qualified.unqualifiedToModuleInterface file)
-            context
-        )
+    case Elm.Parser.parseToFile fileString of
+        Ok file ->
+            Qualified.addModule
+                packageName
+                moduleName
+                (Qualified.unqualifiedToModuleInterface file)
+                context
+                |> Ok
+                |> BackendTask.fromResult
+
+        Err e ->
+            parseErrorToFatalError fileString e
+                |> Err
+                |> BackendTask.fromResult
 
 
 checkModules : Elm.Package.Name -> Qualified.PackageContext -> List ( ModuleName, String ) -> BackendTask FatalError Qualified.PackageInterface
