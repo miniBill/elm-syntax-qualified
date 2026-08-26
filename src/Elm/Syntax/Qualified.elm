@@ -974,6 +974,7 @@ qualifyCase ( pattern, expression ) =
     Monad.map2 Tuple.pair
         (qualifyPattern pattern)
         (qualifyExpression expression)
+        |> Monad.scope
 
 
 qualifyLetDeclaration : Expression.LetDeclaration -> Monad LetDeclaration
