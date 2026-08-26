@@ -111,7 +111,7 @@ checkApplication elmJsonPath application =
                     (List.map
                         (\file ->
                             ( String.slice (String.length dir + 1) -4 file
-                                |> String.split "."
+                                |> String.split "/"
                             , file
                             )
                         )
@@ -275,7 +275,11 @@ checkModules packageName initialContext initialQueue =
                                     { filename = head
                                     , file = fileString
                                     , range = range
-                                    , message = "missing module: " ++ String.join "." moduleName
+                                    , message =
+                                        "missing module: "
+                                            ++ String.join "." moduleName
+                                            ++ "\nAvailable: "
+                                            ++ String.join ", " (List.map (String.join ".") (Set.toList localNames))
                                     }
 
                         Err ( range, Qualified.ModuleNameIsAmbiguous moduleName ) ->
