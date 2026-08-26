@@ -49,7 +49,7 @@ context parsedElmJson =
         |> Elm.Syntax.Qualified.addModule
             (unsafePackageName "elm-explorations/test")
             [ "Test" ]
-            { types = Dict.empty
+            { types = Dict.singleton "Test" []
             , values = Set.empty
             }
 
