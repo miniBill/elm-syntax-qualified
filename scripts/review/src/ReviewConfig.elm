@@ -65,7 +65,7 @@ import VariablesBetweenCaseOf.AccessInCases
 config : List Rule
 config =
     [ Docs.ReviewAtDocs.rule
-    , Derive.rule True []
+    , Derive.rule True [] |> Rule.ignoreErrorsForDirectories [ "tests/", "../tests" ]
     , Docs.ReviewLinksAndSections.rule
     , EqualsCaseable.forbid EqualsCaseable.Everywhere
     , HtmlToElm.rule
@@ -74,8 +74,8 @@ config =
     , NoBrokenParserFunctions.rule
     , NoCatchAllForSpecificRemainingPatterns.rule { onlyReportCatchAllIfEquivalentToSinglePattern = False }
     , NoConfusingPrefixOperator.rule
-    , NoDebug.Log.rule |> Rule.ignoreErrorsForDirectories [ "tests/" ]
-    , NoDebug.TodoOrToString.rule |> Rule.ignoreErrorsForDirectories [ "tests/" ]
+    , NoDebug.Log.rule |> Rule.ignoreErrorsForDirectories [ "tests/", "../tests" ]
+    , NoDebug.TodoOrToString.rule |> Rule.ignoreErrorsForDirectories [ "tests/", "../tests" ]
     , NoDeprecated.rule NoDeprecated.defaults
     , NoDuplicatePorts.rule
     , NoExposingEverything.rule
@@ -93,12 +93,15 @@ config =
     , NoSimpleLetBody.rule
     , NoSinglePatternCase.rule NoSinglePatternCase.fixInArgument
     , NoUnnecessaryTrailingUnderscore.rule
-    , NoUnsafeDivision.rule
     , NoUnsafePorts.rule NoUnsafePorts.onlyIncomingPorts
     , NoUnused.CustomTypeConstructorArgs.rule
+        |> Rule.ignoreErrorsForDirectories [ "../src" ]
     , NoUnused.CustomTypeConstructors.rule []
+        |> Rule.ignoreErrorsForDirectories [ "../src" ]
     , NoUnused.Dependencies.rule
     , NoUnused.Exports.rule
+        |> Rule.ignoreErrorsForFiles [ "src/TestFiles.elm" ]
+        |> Rule.ignoreErrorsForDirectories [ "../src" ]
 
     -- , NoUnused.Modules.rule
     , NoUnused.Parameters.rule
