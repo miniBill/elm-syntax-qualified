@@ -569,6 +569,7 @@ qualifyFunctionDeclaration f =
                 Monad.map Just (qualifySignature signature)
         )
         (qualifyNode qualifyFunctionImplementation f.declaration)
+        |> Monad.onContext (addLocalValueToContext (Node.value (Node.value f.declaration).name))
 
 
 qualifySignature : Node Signature.Signature -> Monad (Node Signature)
@@ -797,7 +798,8 @@ qualifyPattern (Node range pattern) =
                 |> Monad.map (\qc -> Node range (ListPattern qc))
 
         Pattern.VarPattern v ->
-            \context -> Ok ( addLocalValueToContext v context, Node range (VarPattern v) )
+            Monad.succeed (Node range (VarPattern v))
+                |> Monad.onContext (addLocalValueToContext v)
 
         Pattern.NamedPattern qualified patterns ->
             Monad.map2
@@ -914,6 +916,7 @@ qualifyExpression (Node range expression) =
                                         (LetExpression qualifiedDeclarations qualifiedExpression)
                                 )
                     )
+                |> Monad.scope
 
         Expression.CaseExpression caseExpression ->
             Monad.map2 (\qe qb -> Node range (CaseExpression qe qb))
@@ -1571,8 +1574,39 @@ toModuleInterface file =
                             else
                                 acc
 
-                AliasDeclaration _ ->
-                    Debug.todo "branch 'AliasDeclaration _' not implemented"
+                AliasDeclaration { name, typeAnnotation } ->
+                    case typeAnnotation of
+                        Node _ (RecordType _) ->
+                            case exposed of
+                                Nothing ->
+                                    acc
+                                        |> exposeType name []
+                                        |> exposeValue name
+
+                                Just { exposedTypes } ->
+                                    case Dict.get (Node.value name) exposedTypes of
+                                        Nothing ->
+                                            acc
+
+                                        Just _ ->
+                                            acc
+                                                |> exposeType name []
+                                                |> exposeValue name
+
+                        _ ->
+                            case exposed of
+                                Nothing ->
+                                    acc
+                                        |> exposeType name []
+
+                                Just { exposedTypes } ->
+                                    case Dict.get (Node.value name) exposedTypes of
+                                        Nothing ->
+                                            acc
+
+                                        Just _ ->
+                                            acc
+                                                |> exposeType name []
 
                 PortDeclaration { name } ->
                     case exposed of
