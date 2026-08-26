@@ -93,7 +93,6 @@ config =
     , NoSimpleLetBody.rule
     , NoSinglePatternCase.rule NoSinglePatternCase.fixInArgument
     , NoUnnecessaryTrailingUnderscore.rule
-    , NoUnoptimizedRecursion.rule (NoUnoptimizedRecursion.optOutWithComment "IGNORE TCO")
     , NoUnsafeDivision.rule
     , NoUnsafePorts.rule NoUnsafePorts.onlyIncomingPorts
     , NoUnused.CustomTypeConstructorArgs.rule
