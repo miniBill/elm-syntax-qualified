@@ -355,7 +355,15 @@ formatError { filename, file, range, message } =
                 ++ after
                 |> String.join "\n"
     in
-    ("In file " ++ filename ++ ", " ++ message ++ "\n\n" ++ source)
+    ("In file "
+        ++ filename
+        ++ ":"
+        ++ String.fromInt range.start.row
+        ++ ", "
+        ++ message
+        ++ "\n\n"
+        ++ source
+    )
         |> FatalError.fromString
         |> BackendTask.fail
 
