@@ -1,14 +1,16 @@
 module Elm.Syntax.Qualified exposing
-    ( File, ModuleType(..), EffectModuleData, Import, Declaration(..), Expression(..)
-    , fromUnqualified, QualifyError(..), initContext, addModule
-    , Case, Comment, Function, FunctionImplementation, LetDeclaration, ModuleInterface, PackageContext, PackageInterface, Pattern, RecordSetter, Signature, Type, TypeAlias, TypeAnnotation, ValueConstructor, toModuleInterface, unqualifiedToModuleInterface
+    ( File, Declaration(..), Case, Comment, CustomType, EffectModuleData, Expression(..), Function, FunctionImplementation, Import, LetDeclaration(..), ModuleInterface, ModuleType(..), PackageInterface, Pattern(..), QualifyError(..), RecordDefinition, RecordField, RecordSetter, Signature, Type(..), TypeAlias, ValueConstructor
+    , PackageContext, initContext, addModule
+    , fromUnqualified
+    , toModuleInterface, unqualifiedToModuleInterface
     )
 
 {-|
 
-@docs File, ModuleType, EffectModuleData, Import, Declaration, Expression
-
-@docs fromUnqualified, QualifyError, Context, initContext, addModule
+@docs File, Declaration, Case, Comment, CustomType, EffectModuleData, Expression, Function, FunctionImplementation, Import, LetDeclaration, ModuleInterface, ModuleType, PackageInterface, Pattern, QualifyError, RecordDefinition, RecordField, RecordSetter, Signature, Type, TypeAlias, ValueConstructor
+@docs PackageContext, initContext, addModule
+@docs fromUnqualified
+@docs toModuleInterface, unqualifiedToModuleInterface
 
 -}
 
@@ -31,7 +33,7 @@ import Elm.Syntax.Range exposing (Range)
 import Elm.Syntax.Signature as Signature
 import Elm.Syntax.Type as Type
 import Elm.Syntax.TypeAlias as TypeAlias
-import Elm.Syntax.TypeAnnotation as TypeAnnotation
+import Elm.Syntax.TypeAnnotation as TypeAnnotation exposing (TypeAnnotation)
 import Maybe.Extra
 import Result.Extra
 import Set exposing (Set)
@@ -79,7 +81,7 @@ These can be one of the following:
 type Declaration
     = FunctionDeclaration Function
     | AliasDeclaration TypeAlias
-    | CustomTypeDeclaration Type
+    | CustomTypeDeclaration CustomType
     | PortDeclaration Signature
     | InfixDeclaration Infix
 
@@ -97,7 +99,7 @@ type alias Function =
 -}
 type alias Signature =
     { name : Node String
-    , typeAnnotation : Node TypeAnnotation
+    , typeAnnotation : Node Type
     }
 
 
@@ -108,7 +110,7 @@ type alias TypeAlias =
     { documentation : Maybe (Node Documentation)
     , name : Node String
     , generics : List (Node String)
-    , typeAnnotation : Node TypeAnnotation
+    , typeAnnotation : Node Type
     }
 
 
@@ -124,15 +126,15 @@ type alias TypeAlias =
   - `FunctionType`: `Int -> String`
 
 -}
-type TypeAnnotation
+type Type
     = GenericType String
-    | NamedType (Node ( Elm.Package.Name, ModuleName, String )) (List (Node TypeAnnotation))
+    | NamedType (Node ( Elm.Package.Name, ModuleName, String )) (List (Node Type))
     | UnitType
-    | TupleType (Node TypeAnnotation) (Node TypeAnnotation)
-    | TripleType (Node TypeAnnotation) (Node TypeAnnotation) (Node TypeAnnotation)
+    | TupleType (Node Type) (Node Type)
+    | TripleType (Node Type) (Node Type) (Node Type)
     | RecordType RecordDefinition
     | GenericRecordType (Node String) (Node RecordDefinition)
-    | FunctionType (Node TypeAnnotation) (Node TypeAnnotation)
+    | FunctionType (Node Type) (Node Type)
 
 
 {-| A list of fields in-order of a record type annotation.
@@ -144,7 +146,7 @@ type alias RecordDefinition =
 {-| Single field of a record. A name and its type.
 -}
 type alias RecordField =
-    ( Node String, Node TypeAnnotation )
+    ( Node String, Node Type )
 
 
 {-| Type alias for a function's implementation
@@ -197,7 +199,7 @@ type Pattern
 {-| Type alias that defines the syntax for a custom type.
 All information that you can define in a type alias is embedded.
 -}
-type alias Type =
+type alias CustomType =
     { documentation : Maybe (Node Documentation)
     , name : Node String
     , generics : List (Node String)
@@ -209,7 +211,7 @@ type alias Type =
 -}
 type alias ValueConstructor =
     { name : Node String
-    , arguments : List (Node TypeAnnotation)
+    , arguments : List (Node Type)
     }
 
 
@@ -503,7 +505,7 @@ qualifyDeclaration (Node range declaration) =
             Monad.map (\q -> Node range (AliasDeclaration q)) (qualifyTypeAlias a)
 
         Declaration.CustomTypeDeclaration tipe ->
-            Monad.map (\q -> Node range (CustomTypeDeclaration q)) (qualifyType tipe)
+            Monad.map (\q -> Node range (CustomTypeDeclaration q)) (qualifyCustomType tipe)
 
         Declaration.PortDeclaration s ->
             Monad.map (\q -> Node range (PortDeclaration q)) (qualifySignature_ s)
@@ -522,11 +524,11 @@ qualifyTypeAlias alias_ =
             , typeAnnotation = typeAnnotation
             }
         )
-        (qualifyTypeAnnotation alias_.typeAnnotation)
+        (qualifyType alias_.typeAnnotation)
 
 
-qualifyType : Type.Type -> Monad Type
-qualifyType tipe =
+qualifyCustomType : Type.Type -> Monad CustomType
+qualifyCustomType tipe =
     Monad.map
         (\constructors ->
             { documentation = tipe.documentation
@@ -549,7 +551,7 @@ qualifyConstructor_ constructor =
         (\arguments ->
             { name = constructor.name, arguments = arguments }
         )
-        (Monad.combineMap qualifyTypeAnnotation constructor.arguments)
+        (Monad.combineMap qualifyType constructor.arguments)
 
 
 qualifyFunctionDeclaration : Expression.Function -> Monad Function
@@ -585,7 +587,7 @@ qualifySignature_ signature =
             , typeAnnotation = typeAnnotation
             }
         )
-        (qualifyTypeAnnotation signature.typeAnnotation)
+        (qualifyType signature.typeAnnotation)
 
 
 qualifyNode : (a -> Monad b) -> Node a -> Monad (Node b)
@@ -608,8 +610,8 @@ qualifyNode_ f (Node range v) context =
             Err (Node range e)
 
 
-qualifyTypeAnnotation : Node TypeAnnotation.TypeAnnotation -> Monad (Node TypeAnnotation)
-qualifyTypeAnnotation (Node range typeAnnotation) =
+qualifyType : Node TypeAnnotation -> Monad (Node Type)
+qualifyType (Node range typeAnnotation) =
     case typeAnnotation of
         TypeAnnotation.Unit ->
             Monad.succeed (Node range UnitType)
@@ -620,24 +622,24 @@ qualifyTypeAnnotation (Node range typeAnnotation) =
         TypeAnnotation.Typed fullTypeName params ->
             Monad.map2 (\lc rc -> Node range (NamedType lc rc))
                 (qualifyTypeName fullTypeName)
-                (Monad.combineMap qualifyTypeAnnotation params)
+                (Monad.combineMap qualifyType params)
 
         TypeAnnotation.Tupled [ l, r ] ->
             Monad.map2
                 (\ql qr ->
                     Node range (TupleType ql qr)
                 )
-                (qualifyTypeAnnotation l)
-                (qualifyTypeAnnotation r)
+                (qualifyType l)
+                (qualifyType r)
 
         TypeAnnotation.Tupled [ l, m, r ] ->
             Monad.map3
                 (\ql qm qr ->
                     Node range (TripleType ql qm qr)
                 )
-                (qualifyTypeAnnotation l)
-                (qualifyTypeAnnotation m)
-                (qualifyTypeAnnotation r)
+                (qualifyType l)
+                (qualifyType m)
+                (qualifyType r)
 
         TypeAnnotation.Tupled _ ->
             Monad.fail (Node range InvalidSyntax)
@@ -657,13 +659,13 @@ qualifyTypeAnnotation (Node range typeAnnotation) =
                 (\f t ->
                     Node range (FunctionType f t)
                 )
-                (qualifyTypeAnnotation from)
-                (qualifyTypeAnnotation to)
+                (qualifyType from)
+                (qualifyType to)
 
 
 qualifyRecordFieldAnnotation : TypeAnnotation.RecordField -> Monad RecordField
 qualifyRecordFieldAnnotation ( name, annotation ) =
-    Monad.map (Tuple.pair name) (qualifyTypeAnnotation annotation)
+    Monad.map (Tuple.pair name) (qualifyType annotation)
 
 
 qualifyTypeName : Node ( ModuleName, String ) -> Monad (Node ( Elm.Package.Name, ModuleName, String ))
