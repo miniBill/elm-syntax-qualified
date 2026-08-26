@@ -4,6 +4,7 @@ import Ansi.Color
 import BackendTask exposing (BackendTask)
 import BackendTask.Do as Do
 import BackendTask.Env as Env
+import BackendTask.Extra
 import BackendTask.File as File
 import BackendTask.Glob as Glob
 import Cli.Option
@@ -119,13 +120,12 @@ checkApplication elmJsonPath application =
         )
     <| \filesLists ->
     Do.do
-        (List.foldl
-            (\e a -> a |> BackendTask.andThen (addDirectDependency e))
+        (BackendTask.Extra.foldl
+            addDirectDependency
             (Qualified.initContext
                 { packageName = Elm.Syntax.Qualified.Utils.authorProject
                 , elmJson = Elm.Project.Application application
                 }
-                |> BackendTask.succeed
             )
             application.depsDirect
         )
@@ -157,6 +157,7 @@ addDirectDependency ( packageName, packageVersion ) context =
             ]
                 |> String.join "/"
     in
+    Do.log ("Adding dependency: " ++ Elm.Package.toString packageName) <| \() ->
     Do.allowFatal (File.jsonFile Elm.Project.decoder (path ++ "/elm.json")) <| \elmJson ->
     case elmJson of
         Elm.Project.Application _ ->
@@ -174,10 +175,7 @@ addDirectDependency ( packageName, packageVersion ) context =
                         Elm.Project.ExposedDict list ->
                             List.concatMap Tuple.second list
             in
-            List.foldl
-                (\e a -> a |> BackendTask.andThen (addDependencyModule packageName path e))
-                (BackendTask.succeed context)
-                exposed
+            BackendTask.Extra.foldl (addDependencyModule packageName path) context exposed
 
 
 addDependencyModule :
