@@ -142,6 +142,7 @@ addDirectDependency :
     -> BackendTask FatalError Qualified.PackageContext
 addDirectDependency ( packageName, packageVersion ) context =
     let
+        elmVersion : String
         elmVersion =
             "0.19.1"
     in

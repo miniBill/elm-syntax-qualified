@@ -1,7 +1,7 @@
 module Elm.Syntax.Qualified exposing
     ( File, ModuleType(..), EffectModuleData, Import, Declaration(..), Expression(..)
     , fromUnqualified, QualifyError(..), initContext, addModule
-    , ModuleInterface, PackageContext, PackageInterface, toModuleInterface, unqualifiedToModuleInterface
+    , Case, Comment, Function, FunctionImplementation, LetDeclaration, ModuleInterface, PackageContext, PackageInterface, Pattern, RecordSetter, Signature, Type, TypeAlias, TypeAnnotation, ValueConstructor, toModuleInterface, unqualifiedToModuleInterface
     )
 
 {-|
@@ -27,8 +27,6 @@ import Elm.Syntax.ModuleName exposing (ModuleName)
 import Elm.Syntax.Node as Node exposing (Node(..))
 import Elm.Syntax.Pattern as Pattern
 import Elm.Syntax.Qualified.Monad as Monad
-import Elm.Syntax.Qualified.PackageDict as PackageDict exposing (PackageDict)
-import Elm.Syntax.Qualified.Utils
 import Elm.Syntax.Range exposing (Range)
 import Elm.Syntax.Signature as Signature
 import Elm.Syntax.Type as Type
@@ -43,7 +41,7 @@ import Set exposing (Set)
 -}
 type alias File =
     { moduleName : Node ModuleName
-    , exposingList : Node Exposing.Exposing
+    , exposingList : Node Exposing
     , moduleType : Node ModuleType
     , imports : List (Node Import)
     , declarations : List (Node Declaration)
@@ -57,7 +55,7 @@ type alias Import =
     { packageName : Elm.Package.Name
     , moduleName : Node ModuleName
     , moduleAlias : Maybe (Node ModuleName)
-    , exposingList : Maybe (Node Exposing.Exposing)
+    , exposingList : Maybe (Node Exposing)
     }
 
 
@@ -302,14 +300,6 @@ type ModuleType
 type alias EffectModuleData =
     { command : Maybe (Node String)
     , subscription : Maybe (Node String)
-    }
-
-
-{-| Exposed Type
--}
-type alias ExposedType =
-    { name : String
-    , open : Maybe Range
     }
 
 
@@ -755,7 +745,7 @@ qualifyPattern (Node range pattern) =
             Monad.succeed (Node range AllPattern)
 
         Pattern.UnitPattern ->
-            Debug.todo "branch 'UnitPattern' not implemented"
+            Monad.succeed (Node range UnitPattern)
 
         Pattern.CharPattern v ->
             Monad.succeed (Node range (CharPattern v))
@@ -788,14 +778,19 @@ qualifyPattern (Node range pattern) =
         Pattern.TuplePattern _ ->
             Monad.fail (Node range InvalidSyntax)
 
-        Pattern.RecordPattern _ ->
-            Debug.todo "branch 'RecordPattern _' not implemented"
+        Pattern.RecordPattern cs ->
+            Monad.succeed (Node range (RecordPattern cs))
 
-        Pattern.UnConsPattern _ _ ->
-            Debug.todo "branch 'UnConsPattern _ _' not implemented"
+        Pattern.UnConsPattern l r ->
+            Monad.map2
+                (\ql qr -> Node range (UnConsPattern ql qr))
+                (qualifyPattern l)
+                (qualifyPattern r)
 
-        Pattern.ListPattern _ ->
-            Debug.todo "branch 'ListPattern _' not implemented"
+        Pattern.ListPattern cs ->
+            cs
+                |> Monad.combineMap qualifyPattern
+                |> Monad.map (\qc -> Node range (ListPattern qc))
 
         Pattern.VarPattern v ->
             Monad.succeed (Node range (VarPattern v))
@@ -808,8 +803,9 @@ qualifyPattern (Node range pattern) =
                 (qualifyValue (Node range ( qualified.moduleName, qualified.name )))
                 (Monad.combineMap qualifyPattern patterns)
 
-        Pattern.AsPattern _ _ ->
-            Debug.todo "branch 'AsPattern _ _' not implemented"
+        Pattern.AsPattern c n ->
+            qualifyPattern c
+                |> Monad.map (\qc -> Node range (AsPattern qc n))
 
         Pattern.ParenthesizedPattern p ->
             Monad.map (\qp -> Node range (ParenthesizedPattern qp)) (qualifyPattern p)
@@ -1138,11 +1134,6 @@ addModule packageName moduleName moduleInterface (Context context) =
         }
 
 
-addPackage : Elm.Package.Name -> PackageInterface -> PackageContext -> PackageContext
-addPackage packageName modules context =
-    Dict.foldl (addModule packageName) context modules
-
-
 insertResolvesTo :
     comparable
     -> Elm.Package.Name
@@ -1160,12 +1151,6 @@ insertResolvesTo key packageName value dict =
                     Just (ResolvesToPackage packageName value)
         )
         dict
-
-
-type Exposed
-    = NotExposed
-    | ExposedOpaque
-    | ExposedWithVariants
 
 
 unqualifiedToModuleInterface : Elm.Syntax.File.File -> ModuleInterface

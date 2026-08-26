@@ -1,7 +1,6 @@
 module Elm.Syntax.Qualified.PackageDict exposing (PackageDict, empty, get, insert)
 
 import Elm.Package
-import Elm.Version
 import FastDict as Dict exposing (Dict)
 
 

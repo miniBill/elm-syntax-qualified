@@ -1,11 +1,5 @@
 module Elm.Syntax.Qualified.Monad exposing (Monad, andMap, andThen, combineMap, fail, map, map2, map3, run, succeed)
 
-import Dict exposing (Dict)
-import Elm.Package
-import Elm.Syntax.ModuleName exposing (ModuleName)
-import Elm.Syntax.Qualified.PackageDict exposing (PackageDict)
-import Result.Extra
-
 
 type alias Monad context error a =
     context -> Result error ( context, a )
