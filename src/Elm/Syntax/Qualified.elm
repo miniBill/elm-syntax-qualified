@@ -908,14 +908,19 @@ qualifyExpression (Node range expression) =
 
         Expression.LetExpression letBlock ->
             letBlock.declarations
-                |> Monad.combineMap (qualifyNode qualifyLetDeclaration)
+                |> addLetNamesToContext
                 |> Monad.andThen
-                    (\qualifiedDeclarations ->
-                        qualifyExpression letBlock.expression
-                            |> Monad.map
-                                (\qualifiedExpression ->
-                                    Node range
-                                        (LetExpression qualifiedDeclarations qualifiedExpression)
+                    (\() ->
+                        letBlock.declarations
+                            |> Monad.combineMap (qualifyNode qualifyLetDeclaration)
+                            |> Monad.andThen
+                                (\qualifiedDeclarations ->
+                                    qualifyExpression letBlock.expression
+                                        |> Monad.map
+                                            (\qualifiedExpression ->
+                                                Node range
+                                                    (LetExpression qualifiedDeclarations qualifiedExpression)
+                                            )
                                 )
                     )
                 |> Monad.scope
@@ -957,6 +962,26 @@ qualifyExpression (Node range expression) =
 
         Expression.GLSLExpression t ->
             Monad.succeed (Node range (GLSLExpression t))
+
+
+addLetNamesToContext : List (Node Expression.LetDeclaration) -> Monad ()
+addLetNamesToContext declarations =
+    Monad.combineMap addLetNameToContext declarations
+        |> Monad.map (\_ -> ())
+
+
+addLetNameToContext : Node Expression.LetDeclaration -> Monad ()
+addLetNameToContext (Node _ declaration) =
+    case declaration of
+        Expression.LetDestructuring p _ ->
+            qualifyPattern p
+                |> Monad.map (\_ -> ())
+
+        Expression.LetFunction function ->
+            function.declaration
+                |> Node.value
+                |> qualifyFunctionImplementation
+                |> Monad.map (\_ -> ())
 
 
 qualifyLambdaExpression : Expression.Lambda -> Monad ( List (Node Pattern), Node Expression )
