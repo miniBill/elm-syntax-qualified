@@ -978,10 +978,12 @@ addLetNameToContext (Node _ declaration) =
                 |> Monad.map (\_ -> ())
 
         Expression.LetFunction function ->
-            function.declaration
-                |> Node.value
-                |> qualifyFunctionImplementation
-                |> Monad.map (\_ -> ())
+            let
+                (Node _ name) =
+                    (Node.value function.declaration).name
+            in
+            Monad.succeed ()
+                |> Monad.onContext (addLocalValueToContext name)
 
 
 qualifyLambdaExpression : Expression.Lambda -> Monad ( List (Node Pattern), Node Expression )
