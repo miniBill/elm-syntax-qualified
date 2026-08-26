@@ -191,6 +191,7 @@ addDependencyModule packageName path name context =
             Elm.Module.toString name
                 |> String.split "."
     in
+    Do.log ("  Adding module " ++ Elm.Module.toString name) <| \() ->
     Do.allowFatal (File.rawFile (path ++ "/src/" ++ String.join "/" moduleName ++ ".elm")) <| \fileString ->
     case Elm.Parser.parseToFile fileString of
         Ok file ->

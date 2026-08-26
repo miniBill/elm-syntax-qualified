@@ -322,7 +322,6 @@ type PackageContext
 type alias ContextData moduleName =
     { packageName : Elm.Package.Name
     , moduleName : moduleName
-    , dependencies : PackageDict PackageInterface
     , availableModules : Dict ModuleName (ResolvesTo ModuleInterface)
     , visibleModules : Dict ModuleName (ResolvesTo ModuleName)
     , visibleTypes : Dict String (ResolvesTo ModuleName)
@@ -377,7 +376,6 @@ fromUnqualified (Context packageContext) file =
                 addDeclarationToContext
                 { packageName = packageContext.packageName
                 , moduleName = Node.value moduleName
-                , dependencies = packageContext.dependencies
                 , availableModules = packageContext.availableModules
                 , visibleModules = packageContext.visibleModules
                 , visibleTypes = packageContext.visibleTypes
@@ -998,12 +996,7 @@ qualifyImport_ import_ context =
                             Ok ( [], [] )
 
                         Just (Node _ (Exposing.All _)) ->
-                            case Dict.get imported context.availableModules of
-                                Nothing ->
-                                    Err (ModuleNotFound imported)
-
-                                Just _ ->
-                                    Debug.todo "qualifyImport - branch 'Just _' not implemented"
+                            Debug.todo "qualifyImport - branch 'Exposing.All _' not implemented"
 
                         Just (Node _ (Exposing.Explicit list)) ->
                             list
@@ -1025,20 +1018,12 @@ qualifyImport_ import_ context =
                             Ok ( [], [ name ] )
 
                         Exposing.TypeOrAliasExpose name ->
-                            case
-                                PackageDict.get packageName context.dependencies
-                                    |> Maybe.andThen (Dict.get imported)
-                            of
-                                Just importedModuleInterface ->
-                                    case Dict.get name importedModuleInterface.types of
-                                        Just variants ->
-                                            Ok ( [ name ], variants )
-
-                                        Nothing ->
-                                            Err (TypeNotFound imported name)
+                            case Dict.get name moduleInterface.types of
+                                Just variants ->
+                                    Ok ( [ name ], variants )
 
                                 Nothing ->
-                                    Err (ModuleNotFound imported)
+                                    Err (TypeNotFound imported name)
 
                         Exposing.TypeExpose { name, open } ->
                             case open of
@@ -1046,20 +1031,12 @@ qualifyImport_ import_ context =
                                     Ok ( [ name ], [] )
 
                                 Just _ ->
-                                    case
-                                        PackageDict.get packageName context.dependencies
-                                            |> Maybe.andThen (Dict.get imported)
-                                    of
-                                        Just importedModuleInterface ->
-                                            case Dict.get name importedModuleInterface.types of
-                                                Just variants ->
-                                                    Ok ( [ name ], variants )
-
-                                                Nothing ->
-                                                    Err (TypeNotFound imported name)
+                                    case Dict.get name moduleInterface.types of
+                                        Just variants ->
+                                            Ok ( [ name ], variants )
 
                                         Nothing ->
-                                            Err (ModuleNotFound imported)
+                                            Err (TypeNotFound imported name)
             in
             exposedResult
                 |> Result.map
@@ -1145,7 +1122,6 @@ initContext { packageName, elmJson } =
     Context
         { packageName = packageName
         , moduleName = ()
-        , dependencies = PackageDict.empty
         , availableModules = Dict.empty
         , visibleModules = Dict.empty
         , visibleTypes = Dict.empty

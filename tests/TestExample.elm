@@ -40,7 +40,7 @@ suite =
                         |> Expect.ok
 
 
-context : Project -> Elm.Syntax.Qualified.Context
+context : Project -> Elm.Syntax.Qualified.PackageContext
 context parsedElmJson =
     Elm.Syntax.Qualified.initContext
         { packageName = Utils.authorProject
