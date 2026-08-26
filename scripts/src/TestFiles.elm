@@ -267,12 +267,38 @@ checkModules packageName initialContext initialQueue =
                             in
                             go True delayed newModuleDict newContext tail
 
-                        Err ( _, Qualified.ModuleNotFound moduleName ) ->
+                        Err ( range, Qualified.ModuleNotFound moduleName ) ->
                             if Set.member moduleName localNames then
                                 go addedAny (head :: delayed) moduleDict context tail
 
                             else
-                                ("Missing module: " ++ String.join "." moduleName)
+                                let
+                                    split : List String
+                                    split =
+                                        fileString
+                                            |> String.lines
+                                            |> List.drop (range.start.row - 2)
+
+                                    before : List String
+                                    before =
+                                        split |> List.take 1
+
+                                    at : List String
+                                    at =
+                                        split |> List.drop 1 |> List.take (range.end.row - range.start.row + 1)
+
+                                    after : List String
+                                    after =
+                                        split |> List.drop range.start.row |> List.take 1
+
+                                    source : String
+                                    source =
+                                        before
+                                            ++ List.map (Ansi.Color.fontColor Ansi.Color.red) at
+                                            ++ after
+                                            |> String.join "\n"
+                                in
+                                ("In file " ++ head ++ ", missing module: " ++ String.join "." moduleName ++ "\n\n" ++ source)
                                     |> FatalError.fromString
                                     |> BackendTask.fail
 
