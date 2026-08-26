@@ -786,7 +786,12 @@ qualifyPattern (Node range pattern) =
             Monad.fail (Node range InvalidSyntax)
 
         Pattern.RecordPattern cs ->
-            Monad.succeed (Node range (RecordPattern cs))
+            List.foldl
+                (\(Node _ e) m ->
+                    Monad.onContext (addLocalValueToContext e) m
+                )
+                (Monad.succeed (Node range (RecordPattern cs)))
+                cs
 
         Pattern.UnConsPattern l r ->
             Monad.map2
@@ -814,6 +819,7 @@ qualifyPattern (Node range pattern) =
         Pattern.AsPattern c n ->
             qualifyPattern c
                 |> Monad.map (\qc -> Node range (AsPattern qc n))
+                |> Monad.onContext (addLocalValueToContext (Node.value n))
 
         Pattern.ParenthesizedPattern p ->
             Monad.map (\qp -> Node range (ParenthesizedPattern qp)) (qualifyPattern p)
