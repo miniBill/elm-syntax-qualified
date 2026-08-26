@@ -1,7 +1,7 @@
 module Elm.Syntax.Qualified exposing
     ( File, ModuleType(..), EffectModuleData, Import, Declaration(..), Expression(..)
-    , fromUnqualified, QualifyError(..), Context, initContext, addModule
-    , ModuleInterface, PackageInterface, toModuleInterface, unqualifiedToModuleInterface
+    , fromUnqualified, QualifyError(..), initContext, addModule
+    , ModuleInterface, PackageContext, PackageInterface, toModuleInterface, unqualifiedToModuleInterface
     )
 
 {-|
@@ -28,6 +28,7 @@ import Elm.Syntax.Node as Node exposing (Node(..))
 import Elm.Syntax.Pattern as Pattern
 import Elm.Syntax.Qualified.Monad as Monad
 import Elm.Syntax.Qualified.PackageDict as PackageDict exposing (PackageDict)
+import Elm.Syntax.Qualified.Utils
 import Elm.Syntax.Range exposing (Range)
 import Elm.Syntax.Signature as Signature
 import Elm.Syntax.Type as Type
@@ -314,7 +315,7 @@ type alias ExposedType =
 
 {-| Parsing context.
 -}
-type Context
+type PackageContext
     = Context (ContextData ())
 
 
@@ -324,7 +325,8 @@ type alias ContextData moduleName =
     , dependencies : PackageDict PackageInterface
     , availableModules : Dict ModuleName (ResolvesTo ModuleInterface)
     , visibleModules : Dict ModuleName (ResolvesTo ModuleName)
-    , visibleNames : Dict String (ResolvesTo ModuleName)
+    , visibleTypes : Dict String (ResolvesTo ModuleName)
+    , visibleValues : Dict String (ResolvesTo ModuleName)
     }
 
 
@@ -344,10 +346,10 @@ type alias Monad_ a =
 {-| Try building a fully-qualified `File` from an elm-syntax `File`.
 -}
 fromUnqualified :
-    Context
+    PackageContext
     -> Elm.Syntax.File.File
     -> Result ( Range, QualifyError ) File
-fromUnqualified (Context initialContext) file =
+fromUnqualified (Context packageContext) file =
     let
         ( moduleName, exposingList, moduleType ) =
             case file.moduleDefinition of
@@ -369,72 +371,157 @@ fromUnqualified (Context initialContext) file =
                     , Node range (EffectModule { command = effectModule.command, subscription = effectModule.subscription })
                     )
 
-        result : Result (Node QualifyError) ( ContextData ModuleName, File )
-        result =
-            file.imports
-                |> Monad.combineMap qualifyImport
-                |> Monad.andThen
-                    (\imports ->
-                        file.declarations
-                            |> Monad.combineMap qualifyDeclaration
-                            |> Monad.map
-                                (\declarations ->
-                                    { moduleName = moduleName
-                                    , exposingList = exposingList
-                                    , moduleType = moduleType
-                                    , imports = imports
-                                    , declarations = declarations
-                                    , comments = file.comments
-                                    }
-                                )
-                    )
-                |> Monad.run
-                    { packageName = initialContext.packageName
-                    , moduleName = Node.value moduleName
-                    , dependencies = initialContext.dependencies
-                    , availableModules = initialContext.availableModules
-                    , visibleModules = initialContext.visibleModules
-                    , visibleNames = initialContext.visibleNames
-                    }
+        initialContextResult : Result (Node QualifyError) (ContextData ModuleName)
+        initialContextResult =
+            Result.Extra.foldlWhileOk
+                addDeclarationToContext
+                { packageName = packageContext.packageName
+                , moduleName = Node.value moduleName
+                , dependencies = packageContext.dependencies
+                , availableModules = packageContext.availableModules
+                , visibleModules = packageContext.visibleModules
+                , visibleTypes = packageContext.visibleTypes
+                , visibleValues = packageContext.visibleValues
+                }
+                file.declarations
     in
-    case result of
-        Ok ( _, v ) ->
-            Ok v
-
+    case initialContextResult of
         Err (Node range e) ->
             Err ( range, e )
 
+        Ok initialContext ->
+            let
+                result : Result (Node QualifyError) ( ContextData ModuleName, File )
+                result =
+                    file.imports
+                        |> Monad.combineMap qualifyImport
+                        |> Monad.andThen
+                            (\imports ->
+                                file.declarations
+                                    |> Monad.combineMap qualifyDeclaration
+                                    |> Monad.map
+                                        (\declarations ->
+                                            { moduleName = moduleName
+                                            , exposingList = exposingList
+                                            , moduleType = moduleType
+                                            , imports = imports
+                                            , declarations = declarations
+                                            , comments = file.comments
+                                            }
+                                        )
+                            )
+                        |> Monad.run initialContext
+            in
+            case result of
+                Ok ( _, v ) ->
+                    Ok v
 
-qualifyDeclaration : Node Declaration.Declaration -> Monad (Node Declaration)
-qualifyDeclaration v =
-    qualifyNode qualifyDeclaration_ v
+                Err (Node range e) ->
+                    Err ( range, e )
 
 
-qualifyImport : Node Import.Import -> Monad (Node Import)
-qualifyImport v =
-    qualifyNode_ qualifyImport_ v
+addDeclarationToContext :
+    Node Declaration.Declaration
+    -> ContextData ModuleName
+    -> Result (Node QualifyError) (ContextData ModuleName)
+addDeclarationToContext (Node range decl) context =
+    case decl of
+        Declaration.InfixDeclaration _ ->
+            Ok context
 
+        Declaration.FunctionDeclaration function ->
+            let
+                (Node _ declaration) =
+                    function.declaration
 
-qualifyDeclaration_ : Declaration.Declaration -> Monad Declaration
-qualifyDeclaration_ declaration =
-    case declaration of
-        Declaration.InfixDeclaration i ->
-            Monad.succeed (InfixDeclaration i)
+                here : ResolvesTo ModuleName
+                here =
+                    ResolvesToPackage context.packageName context.moduleName
+            in
+            { context
+                | visibleValues = Dict.insert (Node.value declaration.name) here context.visibleValues
+            }
+                |> Ok
 
-        Declaration.FunctionDeclaration f ->
-            Monad.map FunctionDeclaration (qualifyFunctionDeclaration f)
+        Declaration.AliasDeclaration alias_ ->
+            let
+                (Node _ name) =
+                    alias_.name
 
-        Declaration.AliasDeclaration a ->
-            Monad.map AliasDeclaration (qualifyTypeAlias a)
+                here : ResolvesTo ModuleName
+                here =
+                    ResolvesToPackage context.packageName context.moduleName
+            in
+            case alias_.typeAnnotation of
+                Node _ (TypeAnnotation.Record _) ->
+                    { context
+                        | visibleTypes = Dict.insert name here context.visibleTypes
+                        , visibleValues = Dict.insert name here context.visibleValues
+                    }
+                        |> Ok
 
-        Declaration.CustomTypeDeclaration tipe ->
-            Monad.map CustomTypeDeclaration (qualifyType tipe)
+                _ ->
+                    { context
+                        | visibleTypes = Dict.insert name here context.visibleTypes
+                    }
+                        |> Ok
 
-        Declaration.PortDeclaration _ ->
-            Debug.todo "branch 'PortDeclaration _' not implemented"
+        Declaration.CustomTypeDeclaration custom ->
+            let
+                (Node _ name) =
+                    custom.name
+
+                here : ResolvesTo ModuleName
+                here =
+                    ResolvesToPackage context.packageName context.moduleName
+            in
+            List.foldl
+                (\(Node _ constructor) acc ->
+                    { acc
+                        | visibleValues = Dict.insert (Node.value constructor.name) here acc.visibleValues
+                    }
+                )
+                { context
+                    | visibleTypes = Dict.insert name here context.visibleTypes
+                }
+                custom.constructors
+                |> Ok
+
+        Declaration.PortDeclaration { name } ->
+            let
+                here : ResolvesTo ModuleName
+                here =
+                    ResolvesToPackage context.packageName context.moduleName
+            in
+            { context
+                | visibleValues = Dict.insert (Node.value name) here context.visibleValues
+            }
+                |> Ok
 
         Declaration.Destructuring _ _ ->
-            Debug.todo "branch 'Destructuring _ _' not implemented"
+            Err (Node range InvalidSyntax)
+
+
+qualifyDeclaration : Node Declaration.Declaration -> Monad (Node Declaration)
+qualifyDeclaration (Node range declaration) =
+    case declaration of
+        Declaration.InfixDeclaration i ->
+            Monad.succeed (Node range (InfixDeclaration i))
+
+        Declaration.FunctionDeclaration f ->
+            Monad.map (\q -> Node range (FunctionDeclaration q)) (qualifyFunctionDeclaration f)
+
+        Declaration.AliasDeclaration a ->
+            Monad.map (\q -> Node range (AliasDeclaration q)) (qualifyTypeAlias a)
+
+        Declaration.CustomTypeDeclaration tipe ->
+            Monad.map (\q -> Node range (CustomTypeDeclaration q)) (qualifyType tipe)
+
+        Declaration.PortDeclaration s ->
+            Monad.map (\q -> Node range (PortDeclaration q)) (qualifySignature_ s)
+
+        Declaration.Destructuring _ _ ->
+            Monad.fail (Node range InvalidSyntax)
 
 
 qualifyTypeAlias : TypeAlias.TypeAlias -> Monad TypeAlias
@@ -543,7 +630,7 @@ qualifyTypeAnnotation (Node range typeAnnotation) =
 
         TypeAnnotation.Typed fullTypeName params ->
             Monad.map2 (\lc rc -> Node range (NamedType lc rc))
-                (qualifyName fullTypeName)
+                (qualifyTypeName fullTypeName)
                 (Monad.combineMap qualifyTypeAnnotation params)
 
         TypeAnnotation.Tupled [ l, r ] ->
@@ -571,8 +658,10 @@ qualifyTypeAnnotation (Node range typeAnnotation) =
                 |> Monad.combineMap (qualifyNode qualifyRecordFieldAnnotation)
                 |> Monad.map (\qf -> Node range (RecordType qf))
 
-        TypeAnnotation.GenericRecord _ _ ->
-            Debug.todo "qualifyTypeAnnotation: branch 'GenericRecord _ _' not implemented"
+        TypeAnnotation.GenericRecord g (Node fieldsRange fields) ->
+            fields
+                |> Monad.combineMap (qualifyNode qualifyRecordFieldAnnotation)
+                |> Monad.map (\qf -> Node range (GenericRecordType g (Node fieldsRange qf)))
 
         TypeAnnotation.FunctionTypeAnnotation from to ->
             Monad.map2
@@ -588,24 +677,52 @@ qualifyRecordFieldAnnotation ( name, annotation ) =
     Monad.map (Tuple.pair name) (qualifyTypeAnnotation annotation)
 
 
-qualifyName : Node ( ModuleName, String ) -> Monad (Node ( Elm.Package.Name, ModuleName, String ))
-qualifyName name =
-    qualifyNode_ qualifyName_ name
+qualifyTypeName : Node ( ModuleName, String ) -> Monad (Node ( Elm.Package.Name, ModuleName, String ))
+qualifyTypeName name =
+    qualifyNode_ qualifyTypeName_ name
 
 
-qualifyName_ : ( ModuleName, String ) -> Monad_ ( Elm.Package.Name, ModuleName, String )
-qualifyName_ ( moduleName, name ) context =
+qualifyTypeName_ : ( ModuleName, String ) -> Monad_ ( Elm.Package.Name, ModuleName, String )
+qualifyTypeName_ ( moduleName, name ) context =
     if List.isEmpty moduleName then
-        case Dict.get name context.visibleNames of
+        case Dict.get name context.visibleTypes of
             Nothing ->
-                -- Must be a local type
-                Ok ( context, ( context.packageName, context.moduleName, name ) )
+                Err (UnqualifiedNameNotFound name)
 
             Just (ResolvesToPackage packageName realModuleName) ->
                 Ok ( context, ( packageName, realModuleName, name ) )
 
             Just IsAmbiguous ->
-                -- Should not happen for empty module names
+                Err (ModuleNameIsAmbiguous moduleName)
+
+    else
+        case Dict.get moduleName context.visibleModules of
+            Nothing ->
+                Err (ModuleNotFound moduleName)
+
+            Just (ResolvesToPackage packageName fullModuleName) ->
+                Ok ( context, ( packageName, fullModuleName, name ) )
+
+            Just IsAmbiguous ->
+                Err (ModuleNameIsAmbiguous moduleName)
+
+
+qualifyValue : Node ( ModuleName, String ) -> Monad (Node ( Elm.Package.Name, ModuleName, String ))
+qualifyValue name =
+    qualifyNode_ qualifyValue_ name
+
+
+qualifyValue_ : ( ModuleName, String ) -> Monad_ ( Elm.Package.Name, ModuleName, String )
+qualifyValue_ ( moduleName, name ) context =
+    if List.isEmpty moduleName then
+        case Dict.get name context.visibleValues of
+            Nothing ->
+                Err (UnqualifiedNameNotFound name)
+
+            Just (ResolvesToPackage packageName realModuleName) ->
+                Ok ( context, ( packageName, realModuleName, name ) )
+
+            Just IsAmbiguous ->
                 Err (ModuleNameIsAmbiguous moduleName)
 
     else
@@ -690,7 +807,7 @@ qualifyPattern (Node range pattern) =
                 (\(Node _ ( package, fullModuleName, typeName )) qp ->
                     Node range (NamedPattern package fullModuleName typeName qp)
                 )
-                (qualifyName (Node range ( qualified.moduleName, qualified.name )))
+                (qualifyValue (Node range ( qualified.moduleName, qualified.name )))
                 (Monad.combineMap qualifyPattern patterns)
 
         Pattern.AsPattern _ _ ->
@@ -846,7 +963,7 @@ qualifyLetDeclaration declaration =
 
 qualifyFunctionOrValue : Range -> ModuleName -> String -> Monad (Node Expression)
 qualifyFunctionOrValue range moduleName name context =
-    case qualifyName_ ( moduleName, name ) context of
+    case qualifyValue_ ( moduleName, name ) context of
         Ok ( newContext, ( packageName, qualifiedModuleName, _ ) ) ->
             Ok ( newContext, Node range (FunctionOrValueExpression packageName qualifiedModuleName name) )
 
@@ -859,6 +976,11 @@ qualifyRecordField (Node range ( field, expression )) =
     Monad.map (\qe -> Node range ( field, qe )) (qualifyExpression expression)
 
 
+qualifyImport : Node Import.Import -> Monad (Node Import)
+qualifyImport v =
+    qualifyNode_ qualifyImport_ v
+
+
 qualifyImport_ : Import.Import -> Monad_ Import
 qualifyImport_ import_ context =
     let
@@ -869,11 +991,11 @@ qualifyImport_ import_ context =
     case Dict.get imported context.availableModules of
         Just (ResolvesToPackage packageName moduleInterface) ->
             let
-                exposedResult : Result QualifyError (List String)
+                exposedResult : Result QualifyError ( List String, List String )
                 exposedResult =
                     case import_.exposingList of
                         Nothing ->
-                            Ok []
+                            Ok ( [], [] )
 
                         Just (Node _ (Exposing.All _)) ->
                             case Dict.get imported context.availableModules of
@@ -886,25 +1008,42 @@ qualifyImport_ import_ context =
                         Just (Node _ (Exposing.Explicit list)) ->
                             list
                                 |> Result.Extra.combineMap calculateExpose
-                                |> Result.map List.concat
+                                |> Result.map
+                                    (\l ->
+                                        l
+                                            |> List.unzip
+                                            |> Tuple.mapBoth List.concat List.concat
+                                    )
 
-                calculateExpose : Node Exposing.TopLevelExpose -> Result QualifyError (List String)
+                calculateExpose : Node Exposing.TopLevelExpose -> Result QualifyError ( List String, List String )
                 calculateExpose (Node _ expose) =
-                    -- TODO: should separate exposed types and values
                     case expose of
                         Exposing.InfixExpose _ ->
-                            Ok []
+                            Ok ( [], [] )
 
                         Exposing.FunctionExpose name ->
-                            Ok [ name ]
+                            Ok ( [], [ name ] )
 
                         Exposing.TypeOrAliasExpose name ->
-                            Ok [ name ]
+                            case
+                                PackageDict.get packageName context.dependencies
+                                    |> Maybe.andThen (Dict.get imported)
+                            of
+                                Just importedModuleInterface ->
+                                    case Dict.get name importedModuleInterface.types of
+                                        Just variants ->
+                                            Ok ( [ name ], variants )
+
+                                        Nothing ->
+                                            Err (TypeNotFound imported name)
+
+                                Nothing ->
+                                    Err (ModuleNotFound imported)
 
                         Exposing.TypeExpose { name, open } ->
                             case open of
                                 Nothing ->
-                                    Ok [ name ]
+                                    Ok ( [ name ], [] )
 
                                 Just _ ->
                                     case
@@ -914,7 +1053,7 @@ qualifyImport_ import_ context =
                                         Just importedModuleInterface ->
                                             case Dict.get name importedModuleInterface.types of
                                                 Just variants ->
-                                                    Ok (name :: variants)
+                                                    Ok ( [ name ], variants )
 
                                                 Nothing ->
                                                     Err (TypeNotFound imported name)
@@ -924,7 +1063,7 @@ qualifyImport_ import_ context =
             in
             exposedResult
                 |> Result.map
-                    (\exposed ->
+                    (\( exposedTypes, exposedValues ) ->
                         let
                             newContext : ContextData ModuleName
                             newContext =
@@ -938,15 +1077,24 @@ qualifyImport_ import_ context =
                                             packageName
                                             imported
                                             context.visibleModules
-                                    , visibleNames =
+                                    , visibleTypes =
                                         List.foldl
                                             (\e ->
                                                 insertResolvesTo e
                                                     packageName
                                                     imported
                                             )
-                                            context.visibleNames
-                                            exposed
+                                            context.visibleTypes
+                                            exposedTypes
+                                    , visibleValues =
+                                        List.foldl
+                                            (\e ->
+                                                insertResolvesTo e
+                                                    packageName
+                                                    imported
+                                            )
+                                            context.visibleValues
+                                            exposedValues
                                 }
 
                             qualifiedImport : Import
@@ -973,6 +1121,7 @@ type QualifyError
     | ModuleNameIsAmbiguous ModuleName
     | InvalidSyntax
     | TypeNotFound ModuleName String
+    | UnqualifiedNameNotFound String
 
 
 {-| A dictionary of all values and types a package exposes.
@@ -991,7 +1140,7 @@ type alias ModuleInterface =
 
 {-| Build a `Context`.
 -}
-initContext : { packageName : Elm.Package.Name, elmJson : Elm.Project.Project } -> Context
+initContext : { packageName : Elm.Package.Name, elmJson : Elm.Project.Project } -> PackageContext
 initContext { packageName, elmJson } =
     Context
         { packageName = packageName
@@ -999,11 +1148,12 @@ initContext { packageName, elmJson } =
         , dependencies = PackageDict.empty
         , availableModules = Dict.empty
         , visibleModules = Dict.empty
-        , visibleNames = Dict.empty
+        , visibleTypes = Dict.empty
+        , visibleValues = Dict.empty
         }
 
 
-addModule : Elm.Package.Name -> ModuleName -> ModuleInterface -> Context -> Context
+addModule : Elm.Package.Name -> ModuleName -> ModuleInterface -> PackageContext -> PackageContext
 addModule packageName moduleName moduleInterface (Context context) =
     Context
         { context
@@ -1012,7 +1162,7 @@ addModule packageName moduleName moduleInterface (Context context) =
         }
 
 
-addPackage : Elm.Package.Name -> PackageInterface -> Context -> Context
+addPackage : Elm.Package.Name -> PackageInterface -> PackageContext -> PackageContext
 addPackage packageName modules context =
     Dict.foldl (addModule packageName) context modules
 

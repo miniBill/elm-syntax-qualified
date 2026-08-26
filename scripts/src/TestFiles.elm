@@ -26,7 +26,7 @@ import Pages.Internal.Platform.Cli as Cli
 import Pages.Script as Script exposing (Script)
 import Parser
 import Parser.Error
-import Set
+import Set exposing (Set)
 
 
 type alias CliOptions =
@@ -103,7 +103,20 @@ checkApplication elmJsonPath application =
         sourceDirectories =
             application.dirs |> List.map (\dir -> projectPath ++ "/" ++ dir)
     in
-    Do.each sourceDirectories (\dir -> Glob.fromString (dir ++ "/**/*.elm")) <| \filesLists ->
+    Do.each sourceDirectories
+        (\dir ->
+            Glob.fromString (dir ++ "/**/*.elm")
+                |> BackendTask.map
+                    (List.map
+                        (\file ->
+                            ( String.slice (String.length dir + 1) -4 file
+                                |> String.split "."
+                            , file
+                            )
+                        )
+                    )
+        )
+    <| \filesLists ->
     Do.do
         (List.foldl
             (\e a -> a |> BackendTask.andThen (addDirectDependency e))
@@ -124,8 +137,8 @@ checkApplication elmJsonPath application =
 
 addDirectDependency :
     ( Elm.Package.Name, Elm.Version.Version )
-    -> Qualified.Context
-    -> BackendTask FatalError Qualified.Context
+    -> Qualified.PackageContext
+    -> BackendTask FatalError Qualified.PackageContext
 addDirectDependency ( packageName, packageVersion ) context =
     let
         elmVersion =
@@ -170,8 +183,8 @@ addDependencyModule :
     Elm.Package.Name
     -> String
     -> Elm.Module.Name
-    -> Qualified.Context
-    -> BackendTask FatalError Qualified.Context
+    -> Qualified.PackageContext
+    -> BackendTask FatalError Qualified.PackageContext
 addDependencyModule packageName path name context =
     let
         moduleName : ModuleName
@@ -195,16 +208,22 @@ addDependencyModule packageName path name context =
         )
 
 
-checkModules : Elm.Package.Name -> Qualified.Context -> List String -> BackendTask FatalError Qualified.PackageInterface
-checkModules packageName =
+checkModules : Elm.Package.Name -> Qualified.PackageContext -> List ( ModuleName, String ) -> BackendTask FatalError Qualified.PackageInterface
+checkModules packageName initialContext initialQueue =
     let
+        localNames : Set ModuleName
+        localNames =
+            initialQueue
+                |> List.map Tuple.first
+                |> Set.fromList
+
         -- TODO: this is currently O(n l) where n is the number of modules and l is the maximum
         -- import depth. In practice l is `log n` but in theory it could be O(n)
         go :
             Bool
             -> List String
             -> Qualified.PackageInterface
-            -> Qualified.Context
+            -> Qualified.PackageContext
             -> List String
             -> BackendTask FatalError Qualified.PackageInterface
         go addedAny delayed moduleDict context queue =
@@ -230,7 +249,7 @@ checkModules packageName =
                     case Qualified.fromUnqualified context file of
                         Ok qualified ->
                             let
-                                newContext : Qualified.Context
+                                newContext : Qualified.PackageContext
                                 newContext =
                                     Qualified.addModule packageName moduleName moduleInterface context
 
@@ -248,8 +267,14 @@ checkModules packageName =
                             in
                             go True delayed newModuleDict newContext tail
 
-                        Err ( _, Qualified.ModuleNotFound _ ) ->
-                            go addedAny (head :: delayed) moduleDict context tail
+                        Err ( _, Qualified.ModuleNotFound moduleName ) ->
+                            if Set.member moduleName localNames then
+                                go addedAny (head :: delayed) moduleDict context tail
+
+                            else
+                                ("Missing module: " ++ String.join "." moduleName)
+                                    |> FatalError.fromString
+                                    |> BackendTask.fail
 
                         Err ( _, Qualified.ModuleNameIsAmbiguous _ ) ->
                             Debug.todo "branch 'Err (Node _ (ModuleNameIsAmbiguous _))' not implemented"
@@ -259,8 +284,11 @@ checkModules packageName =
 
                         Err ( _, Qualified.TypeNotFound _ _ ) ->
                             Debug.todo "branch 'Err ( _, TypeNotFound _ _ )' not implemented"
+
+                        Err ( _, Qualified.UnqualifiedNameNotFound _ ) ->
+                            Debug.todo "branch 'Err ( _, UnqualifiedNameNotFound _ )' not implemented"
     in
-    go False [] Dict.empty
+    go False [] Dict.empty initialContext (List.map Tuple.second initialQueue)
 
 
 parseErrorToFatalError : String -> List Parser.DeadEnd -> FatalError

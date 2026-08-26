@@ -1,4 +1,4 @@
-module Elm.Syntax.Qualified.Utils exposing (authorProject)
+module Elm.Syntax.Qualified.Utils exposing (authorProject, elmCore)
 
 import Elm.Package
 
@@ -8,6 +8,18 @@ import Elm.Package
 authorProject : Elm.Package.Name
 authorProject =
     case Elm.Package.fromString "author/project" of
+        Nothing ->
+            crash ()
+
+        Just name ->
+            name
+
+
+{-| `elm/core` package name.
+-}
+elmCore : Elm.Package.Name
+elmCore =
+    case Elm.Package.fromString "elm/core" of
         Nothing ->
             crash ()
 
