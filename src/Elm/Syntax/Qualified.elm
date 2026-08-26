@@ -26,6 +26,7 @@ import Elm.Syntax.ModuleName exposing (ModuleName)
 import Elm.Syntax.Node as Node exposing (Node(..))
 import Elm.Syntax.Pattern as Pattern
 import Elm.Syntax.Qualified.Monad as Monad
+import Elm.Syntax.Qualified.Utils as Utils
 import Elm.Syntax.Range exposing (Range)
 import Elm.Syntax.Signature as Signature
 import Elm.Syntax.Type as Type
@@ -1118,10 +1119,97 @@ initContext { packageName } =
         { packageName = packageName
         , moduleName = ()
         , availableModules = Dict.empty
-        , visibleModules = Dict.empty
-        , visibleTypes = Dict.empty
-        , visibleValues = Dict.empty
+        , visibleModules = defaultVisibleModules
+        , visibleTypes = defaultVisibleTypes
+        , visibleValues = defaultVisibleValues
         }
+
+
+defaultVisibleValues : Dict String (ResolvesTo ModuleName)
+defaultVisibleValues =
+    [ ( "abs", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "acos", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "always", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "asin", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "atan", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "atan2", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "ceiling", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "clamp", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "compare", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "cos", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "degrees", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "e", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "EQ", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "False", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "floor", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "fromPolar", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "GT", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "identity", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "isInfinite", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "isNaN", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "logBase", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "LT", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "max", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "min", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "modBy", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "negate", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "never", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "not", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "pi", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "radians", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "remainderBy", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "round", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "sin", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "sqrt", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "tan", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "toFloat", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "toPolar", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "True", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "truncate", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "turns", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "xor", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "Just", ResolvesToPackage Utils.elmCore [ "Maybe" ] )
+    , ( "Nothing", ResolvesToPackage Utils.elmCore [ "Maybe" ] )
+    , ( "Ok", ResolvesToPackage Utils.elmCore [ "Result" ] )
+    , ( "Err", ResolvesToPackage Utils.elmCore [ "Result" ] )
+    ]
+        |> Dict.fromList
+
+
+defaultVisibleTypes : Dict String (ResolvesTo ModuleName)
+defaultVisibleTypes =
+    [ ( "Int", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "Float", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "Order", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "Bool", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "Never", ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( "List", ResolvesToPackage Utils.elmCore [ "List" ] )
+    , ( "Maybe", ResolvesToPackage Utils.elmCore [ "Maybe" ] )
+    , ( "Result", ResolvesToPackage Utils.elmCore [ "Result" ] )
+    , ( "String", ResolvesToPackage Utils.elmCore [ "String" ] )
+    , ( "Char", ResolvesToPackage Utils.elmCore [ "Char" ] )
+    , ( "Program", ResolvesToPackage Utils.elmCore [ "Platform" ] )
+    , ( "Cmd", ResolvesToPackage Utils.elmCore [ "Platform.Cmd" ] )
+    , ( "Sub", ResolvesToPackage Utils.elmCore [ "Platform.Sub" ] )
+    ]
+        |> Dict.fromList
+
+
+defaultVisibleModules : Dict ModuleName (ResolvesTo ModuleName)
+defaultVisibleModules =
+    [ ( [ "Basics" ], ResolvesToPackage Utils.elmCore [ "Basics" ] )
+    , ( [ "List" ], ResolvesToPackage Utils.elmCore [ "List" ] )
+    , ( [ "Maybe" ], ResolvesToPackage Utils.elmCore [ "Maybe" ] )
+    , ( [ "Result" ], ResolvesToPackage Utils.elmCore [ "Result" ] )
+    , ( [ "String" ], ResolvesToPackage Utils.elmCore [ "String" ] )
+    , ( [ "Char" ], ResolvesToPackage Utils.elmCore [ "Char" ] )
+    , ( [ "Tuple" ], ResolvesToPackage Utils.elmCore [ "Tuple" ] )
+    , ( [ "Debug" ], ResolvesToPackage Utils.elmCore [ "Debug" ] )
+    , ( [ "Platform" ], ResolvesToPackage Utils.elmCore [ "Platform" ] )
+    , ( [ "Cmd" ], ResolvesToPackage Utils.elmCore [ "Platform", "Cmd" ] )
+    , ( [ "Sub" ], ResolvesToPackage Utils.elmCore [ "Platform", "Sub" ] )
+    ]
+        |> Dict.fromList
 
 
 addModule : Elm.Package.Name -> ModuleName -> ModuleInterface -> PackageContext -> PackageContext
